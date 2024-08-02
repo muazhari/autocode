@@ -1,0 +1,16 @@
+pymoo
+pydantic_settings
+fastapi
+dependency-injector
+ray
+fastapi
+matplotlib<3.9.0
+sqlmodel
+dill
+streamlit
+numpy<2
+python-on-whales
+uvicorn
+langchain
+langchain-openai
+langgraph

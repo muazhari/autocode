@@ -1,0 +1,184 @@
+import time
+from math import ceil
+from typing import List, Dict, Any, Set
+
+import dill
+import numpy as np
+import pandas as pd
+import streamlit as st
+from pymoo.core.plot import Plot
+from pymoo.core.result import Result
+from sqlmodel import Session, select
+
+from autocode import OptimizationUseCase
+from autocode.container import ApplicationContainer
+from autocode.datastore import OneDatastore
+from autocode.model import Cache, OptimizationObjective, OptimizationVariable, OptimizationClient, OptimizationValue, \
+    OptimizationBinary, OptimizationChoice, OptimizationInteger, OptimizationReal
+
+container: ApplicationContainer = ApplicationContainer()
+one_datastore: OneDatastore = container.datastores.one()
+optimization_use_case: OptimizationUseCase = container.use_cases.optimization()
+objective_caches: List[Cache] = []
+objectives: List[OptimizationObjective] = []
+variables: Dict[str, OptimizationBinary | OptimizationReal | OptimizationInteger | OptimizationChoice] = {}
+client_caches: List[Cache] = []
+clients: Dict[str, OptimizationClient] = {}
+weights: List[float] = []
+
+st.session_state.setdefault("old_result_caches", set())
+
+clear_cache = st.button("Clear cache")
+if clear_cache:
+    st.cache_data.clear()
+    st.cache_resource.clear()
+    st.session_state.clear()
+
+client_placeholder = st.empty()
+
+while True:
+    try:
+        session: Session = one_datastore.get_session()
+        objective_caches = list(session.exec(select(Cache).where(Cache.key == "objectives")).all())
+        client_caches = list(session.exec(select(Cache).where(Cache.key.startswith("clients"))).all())
+        session.close()
+    except Exception as e:
+        print(e)
+        time.sleep(0.01)
+        continue
+
+    with client_placeholder:
+        st.subheader(f"Number of clients: {len(client_caches)}")
+
+    if len(objective_caches) > 0:
+        break
+
+    time.sleep(0.01)
+
+if len(objective_caches) == 0 and len(client_caches) == 0:
+    st.write("Waiting for preparation data.")
+elif len(objective_caches) == 1 and len(client_caches) >= 1:
+    objectives = dill.loads(objective_caches[0].value)
+    for client_cache in client_caches:
+        client: OptimizationClient = dill.loads(client_cache.value)
+        clients[client.id] = client
+        variables.update(client.variables)
+    for index, objective in enumerate(objectives):
+        st.subheader(f"Objective {index + 1}")
+        st.radio(
+            label="Type",
+            options=[objective.type],
+            index=0,
+            horizontal=True,
+            key=f"type_{index}"
+        )
+        weight: float = st.slider(
+            label=f"Weight",
+            min_value=0.0,
+            max_value=1.0,
+            value=0.5,
+            key=f"weight_{index}"
+        )
+        weights.append(weight)
+else:
+    st.error("Preparation data cache should be exactly 1.")
+
+plot_0_placeholder = st.empty()
+plot_1_placeholder = st.empty()
+st.subheader("Objective Space")
+plot_f_df_placeholder = st.empty()
+st.subheader("Solution Space")
+plot_x_df_placeholder = st.empty()
+
+while True:
+    try:
+        session: Session = one_datastore.get_session()
+        query = select(Cache).where(Cache.key.startswith("results"))
+        result_caches: Set[Cache] = set(session.exec(query).all())
+        diff_result_caches = result_caches - st.session_state["old_result_caches"]
+    except Exception as e:
+        print(e)
+        time.sleep(0.01)
+        continue
+
+    if len(diff_result_caches) == 0:
+        to_display_indexes = []
+    else:
+        n: int = 10
+        to_display_indexes = list(range(len(diff_result_caches)))[::int(ceil(len(diff_result_caches) / n))]
+
+    for index, cache in enumerate(diff_result_caches):
+        if index not in to_display_indexes:
+            st.session_state["old_result_caches"].add(cache)
+            continue
+
+        result: Result = dill.loads(cache.value)
+
+        if result.F.ndim == 1:
+            result.F = np.array([result.F])
+
+        decision_index: int = optimization_use_case.get_decision_index(
+            result=result,
+            weights=weights
+        )
+        for index, objective in enumerate(objectives):
+            if objective.type == "maximize":
+                result.F[:, index] = -result.F[:, index]
+
+        plots: List[Plot] = optimization_use_case.plot(
+            result=result,
+            decision_index=decision_index
+        )
+
+        with plot_0_placeholder:
+            st.pyplot(plots[0].fig)
+
+        with plot_1_placeholder:
+            st.pyplot(plots[1].fig)
+
+        list_dict_x: List[List[Dict[str, Any]]] = []
+        list_dict_f: List[Dict[str, Any]] = []
+        for index, (x, f) in enumerate(zip(result.X, result.F)):
+            list_transformed_x: List[Dict[str, Any]] = []
+            for variable_id, variable_value in x.items():
+                variable: OptimizationVariable = variables[variable_id]
+                client: OptimizationClient = clients[variable.get_client_id()]
+                if type(variable_value) is not OptimizationValue:
+                    value: OptimizationValue = OptimizationValue(
+                        data=variable_value
+                    )
+                else:
+                    value: OptimizationValue = variable_value
+
+                if value.type == "OptimizationValueFunction":
+                    variable_value = value.data.model_dump(mode="python")
+                else:
+                    variable_value = value.data
+
+                transformed_x: Dict[str, Any] = {
+                    "variable_name": variables[variable_id].name,
+                    "variable_type": variable.type,
+                    "variable_value": variable_value,
+                    "variable_value_type": value.type,
+                    "client_name": client.name,
+                }
+                list_transformed_x.append(transformed_x)
+            list_dict_x.append(list_transformed_x)
+
+            dict_f: Dict[str, Any] = {}
+            dict_f["decision"] = index == decision_index
+            for index, f_value in enumerate(f):
+                dict_f[f"f{index + 1}"] = f_value
+            list_dict_f.append(dict_f)
+
+        with plot_f_df_placeholder:
+            f_df: pd.DataFrame = pd.DataFrame(list_dict_f)
+            st.dataframe(f_df, height=500)
+
+        with plot_x_df_placeholder:
+            st.json(list_dict_x, expanded=False)
+
+        st.session_state["old_result_caches"].add(cache)
+
+    session.close()
+    time.sleep(0.01)
