@@ -136,13 +136,13 @@ class OptimizationClient(BaseModel):
     name: str
     host: str
     port: int
+    worker_id: str
 
 
 class OptimizationPrepareRequest(BaseModel):
     variables: Dict[str, OptimizationBinary | OptimizationChoice | OptimizationInteger | OptimizationReal]
-    host: str
+    host: Optional[str]
     port: int
-    name: str
 
     def __init__(self, **data):
         transformed_variables: Dict[str, OptimizationVariable] = {}
@@ -163,16 +163,10 @@ class OptimizationPrepareRequest(BaseModel):
 
 class OptimizationPrepareResponse(BaseModel):
     variables: Dict[str, OptimizationBinary | OptimizationChoice | OptimizationInteger | OptimizationReal]
-    num_workers: int
 
 
 class OptimizationEvaluatePrepareRequest(BaseModel):
-    worker_id: str
     variable_values: Dict[str, OptimizationValue]
-
-
-class OptimizationEvaluateRunRequest(BaseModel):
-    worker_id: str
 
 
 class OptimizationEvaluateRunResponse(BaseModel):

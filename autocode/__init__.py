@@ -9,7 +9,7 @@ import uvicorn
 from fastapi import FastAPI
 from httpx import Client
 from pymoo.core.result import Result
-from sqlmodel import SQLModel
+from python_on_whales import DockerClient
 from starlette.middleware.cors import CORSMiddleware
 
 from autocode.container import ApplicationContainer
@@ -42,9 +42,7 @@ class Optimization:
         application_setting.server_host = server_host
         application_setting.server_port = server_port
         application_setting.dashboard_port = dashboard_port
-
-        one_datastore: OneDatastore = self.application_container.datastores.one()
-        SQLModel.metadata.create_all(one_datastore.engine)
+        self.reset()
 
         self.app: FastAPI = FastAPI()
         self.app.add_middleware(
@@ -58,8 +56,6 @@ class Optimization:
         self.app.include_router(
             router=self.application_container.routers.api().router
         )
-
-        # self.run_server()
 
         self.server: Process = Process(
             target=self.run_server,
@@ -114,6 +110,12 @@ class Optimization:
     def reset(self):
         optimization_use_case: OptimizationUseCase = self.application_container.use_cases.optimization()
         optimization_use_case.reset()
+
+    def deploy(self, compose_files: List[str]) -> List[DockerClient]:
+        optimization_use_case: OptimizationUseCase = self.application_container.use_cases.optimization()
+        return optimization_use_case.deploy(
+            compose_files=compose_files
+        )
 
     def run(
             self,

@@ -4,8 +4,6 @@ services:
     build:
       context: ./client/app_account
       dockerfile: .Dockerfile
-    environment:
-      - WORKER_ID=${WORKER_ID}
     command:
       - go
       - test
@@ -14,13 +12,13 @@ services:
       - ./client/app_account:/workdir
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    environment:
+      - GOPROXY=direct
   app-product:
     image: muazhari/autocode-example-app-product:latest
     build:
       context: ./client/app_product
       dockerfile: .Dockerfile
-    environment:
-      - WORKER_ID=${WORKER_ID}
     command:
       - go
       - test
@@ -29,3 +27,5 @@ services:
       - ./client/app_product:/workdir
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    environment:
+      - GOPROXY=direct

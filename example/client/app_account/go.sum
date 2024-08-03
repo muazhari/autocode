@@ -11,8 +11,8 @@ github.com/klauspost/compress v1.17.9/go.mod h1:Di0epgTjJY877eYKx5yC51cX2A2Vl2ib
 github.com/mattn/go-runewidth v0.0.3/go.mod h1:LwmH8dsx7+W8Uxz3IHJYH5QSwggIsqBzpuz5H//U1FU=
 github.com/mattn/go-runewidth v0.0.15 h1:UNAjwbU9l54TA3KzvqLGxwWjHmMgBUVhBiTjelZgg3U=
 github.com/mattn/go-runewidth v0.0.15/go.mod h1:Jdepj2loyihRzMpdS35Xk/zdY8IAYHsh153qUoGf23w=
-github.com/muazhari/autocode-go v0.0.0-20240802193030-afe3b4eb9053 h1:rurTj0RthjN72pevhuMRL1SVrdotdASW1WikURxFc/I=
-github.com/muazhari/autocode-go v0.0.0-20240802193030-afe3b4eb9053/go.mod h1:pKKR6T6V1G0M3vdBtIIX65hIweojOWg0Lsz/G5UlzUA=
+github.com/muazhari/autocode-go v0.0.0-20240803054100-bb6787c47dd1 h1:v3lQhd2h++mpPG6+G7fjiq5f6a9PXUYaz4qLbbTtSdI=
+github.com/muazhari/autocode-go v0.0.0-20240803054100-bb6787c47dd1/go.mod h1:pKKR6T6V1G0M3vdBtIIX65hIweojOWg0Lsz/G5UlzUA=
 github.com/muazhari/gomacro-custom v0.0.0-20240731093833-a6136ef7aaa6 h1:bVd+/pTg3Vmmev3bfvqFMYfBtCI1WLJFT4OgTOCpYmk=
 github.com/muazhari/gomacro-custom v0.0.0-20240731093833-a6136ef7aaa6/go.mod h1:TpqeUBTRIqg+V3AdDQkZWvzlbvUm5Lj5toOWN9Ifkao=
 github.com/peterh/liner v1.2.2 h1:aJ4AOodmL+JxOZZEL2u9iJf8omNRpqHc/EbrK+3mAXw=

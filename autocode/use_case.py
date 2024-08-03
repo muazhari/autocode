@@ -24,6 +24,8 @@ from pymoo.decomposition.asf import ASF
 from pymoo.optimize import minimize
 from pymoo.visualization.pcp import PCP
 from pymoo.visualization.scatter import Scatter
+from python_on_whales import DockerClient
+from python_on_whales.components.container.models import NetworkInspectResult
 from ray.util.queue import Queue
 from sqlalchemy import delete
 from sqlmodel import Session, SQLModel, select
@@ -31,7 +33,7 @@ from sqlmodel import Session, SQLModel, select
 from autocode.datastore import OneDatastore
 from autocode.gateway import EvaluationGateway
 from autocode.model import OptimizationPrepareRequest, OptimizationChoice, OptimizationBinary, \
-    OptimizationInteger, OptimizationReal, OptimizationVariable, OptimizationClient, OptimizationEvaluateRunRequest, \
+    OptimizationInteger, OptimizationReal, OptimizationVariable, OptimizationClient, \
     OptimizationValue, OptimizationEvaluatePrepareRequest, OptimizationEvaluateRunResponse, OptimizationObjective, \
     OptimizationPrepareResponse, Cache, OptimizationValueFunction, CodeScoring, \
     ScoringState, CodeVariation, VariationState
@@ -80,9 +82,22 @@ class OptimizationProblem(ElementwiseProblem):
         self.variables = variables
         self.clients = clients
         self.evaluator = evaluator
+
         self.queue = Queue()
-        for i in range(self.application_setting.num_cpus):
-            self.queue.put(str(i))
+        worker_id_to_count: Dict[str, int] = {}
+        for client in self.clients.values():
+            worker_id_to_count[client.worker_id] = worker_id_to_count.get(client.worker_id, 0) + 1
+
+        worker_id_sum: int = 0
+        for worker_id in worker_id_to_count.keys():
+            worker_id_sum += 1
+            self.queue.put(worker_id)
+
+        if worker_id_sum != self.application_setting.num_cpus:
+            raise ValueError(
+                f"Number of worker_id_sum {worker_id_sum} does not match {self.application_setting.num_cpus}."
+            )
+
         self.vars: Dict[str, Variable] = {}
         for variable_id, variable in variables.items():
             variable_type = type(variable)
@@ -122,11 +137,13 @@ class OptimizationProblem(ElementwiseProblem):
 
         prepare_futures: List[Coroutine] = []
         for client_id, variable_values in client_to_variable_values.items():
+            client: OptimizationClient = self.clients[client_id]
+            if client.worker_id != worker_id:
+                continue
+
             prepare_request: OptimizationEvaluatePrepareRequest = OptimizationEvaluatePrepareRequest(
-                worker_id=worker_id,
                 variable_values=variable_values
             )
-            client: OptimizationClient = self.clients[client_id]
             prepare_response = self.optimization_gateway.evaluate_prepare(
                 client=client,
                 request=prepare_request
@@ -137,12 +154,11 @@ class OptimizationProblem(ElementwiseProblem):
 
         run_futures: List[Coroutine] = []
         for client in self.clients.values():
-            run_request: OptimizationEvaluateRunRequest = OptimizationEvaluateRunRequest(
-                worker_id=worker_id
-            )
+            if client.worker_id != worker_id:
+                continue
+
             run_response = self.optimization_gateway.evaluate_run(
                 client=client,
-                request=run_request
             )
             run_futures.append(run_response)
 
@@ -365,12 +381,33 @@ class OptimizationUseCase:
         self.application_setting = application_setting
 
     def prepare(self, request: OptimizationPrepareRequest) -> OptimizationPrepareResponse:
-        client: OptimizationClient = OptimizationClient(
-            variables=request.variables,
-            host=request.host,
-            port=request.port,
-            name=request.name
+        session: Session = self.one_datastore.get_session()
+        client_caches: List[Cache] = list(session.exec(select(Cache).where(Cache.key == "clients")).all())
+        client_name_to_variable_caches: List[Cache] = list(
+            session.exec(select(Cache).where(Cache.key == "client_name_to_variables")).all()
         )
+
+        if len(client_caches) == 1:
+            clients: Dict[str, OptimizationClient] = dill.loads(client_caches[0].value)
+            client: OptimizationClient = [client for client in clients.values() if client.name == request.name][0]
+        else:
+            raise ValueError(f"Number of client_caches must be 1, but got {len(client_caches)}.")
+
+        if len(client_name_to_variable_caches) == 1:
+            client_name_to_variables: Dict[str, Dict[str, OptimizationVariable]] = dill.loads(
+                client_name_to_variable_caches[0].value
+            )
+        else:
+            raise ValueError(
+                f"Number of client_name_to_variable_caches must be 1, but got {len(client_name_to_variable_caches)}."
+            )
+
+        response: OptimizationPrepareResponse = OptimizationPrepareResponse(
+            variables=client.variables,
+        )
+        if client_name_to_variables.get(request.name, None) is not None:
+            response.variables = client_name_to_variables[request.name]
+            return response
 
         list_variation_futures: List[Coroutine] = []
         list_variables: List[OptimizationVariable] = []
@@ -431,25 +468,101 @@ class OptimizationUseCase:
 
         session: Session = self.one_datastore.get_session()
         client_cache: Cache = Cache(
-            key=f"clients_{client.id}",
-            value=dill.dumps(client)
+            key=f"clients",
+            value=dill.dumps(clients)
+        )
+        client_name_to_variable_cache: Cache = Cache(
+            key="client_name_to_variables",
+            value=dill.dumps(client_name_to_variables)
         )
         session.add(client_cache)
+        session.add(client_name_to_variable_cache)
         session.commit()
         session.close()
 
-        response = OptimizationPrepareResponse(
-            variables=client.variables,
-            num_workers=self.application_setting.num_cpus
-        )
-
         return response
 
-    def run_deployment(self):
-        pass
+    def deploy(self, compose_files: List[str]) -> List[DockerClient]:
+        session: Session = self.one_datastore.get_session()
+        docker_client_caches = list(session.exec(select(Cache).where(Cache.key == "docker_clients")).all())
+        if len(docker_client_caches) == 1:
+            session.exec(delete(Cache).where(Cache.key == "clients"))
+            session.exec(delete(Cache).where(Cache.key == "client_name_to_variables"))
+            session.commit()
+            clients: Dict[str, OptimizationClient] = {}
+            docker_clients: List[DockerClient] = dill.loads(docker_client_caches[0].value)
+            for docker_client in docker_clients:
+                worker_id: str = docker_client.client_config.compose_project_name
+                docker_client.compose.up(
+                    detach=True,
+                    build=True
+                )
+                for container in docker_client.compose.ps():
+                    networks: List[NetworkInspectResult] = list(container.network_settings.networks.values())
+                    client: OptimizationClient = OptimizationClient(
+                        variables={},
+                        host=networks[0].ip_address,
+                        port=11000,
+                        name=container.name.removeprefix(f"{worker_id}-"),
+                        worker_id=worker_id
+                    )
+                    clients[client.id] = client
+                docker_clients.append(docker_client)
+            client_cache: Cache = Cache(
+                key="clients",
+                value=dill.dumps(clients)
+            )
+            session.add(client_cache)
+            session.commit()
+            session.close()
+        else:
+            docker_clients: List[DockerClient] = []
+            clients: Dict[str, OptimizationClient] = {}
+            for i in range(self.application_setting.num_cpus):
+                worker_id: str = uuid.uuid4().hex
+                docker_client = DockerClient(
+                    compose_project_name=worker_id,
+                    compose_files=compose_files,
+                )
+                docker_client.compose.up(
+                    detach=True,
+                    build=True
+                )
+                for container in docker_client.compose.ps():
+                    networks: List[NetworkInspectResult] = list(container.network_settings.networks.values())
+                    client: OptimizationClient = OptimizationClient(
+                        variables={},
+                        host=networks[0].ip_address,
+                        port=11000,
+                        name=container.name.removeprefix(f"{worker_id}-"),
+                        worker_id=worker_id
+                    )
+                    clients[client.id] = client
+                docker_clients.append(docker_client)
 
+            docker_client_cache: Cache = Cache(
+                key="docker_clients",
+                value=dill.dumps(docker_clients)
+            )
+            client_cache: Cache = Cache(
+                key="clients",
+                value=dill.dumps(clients)
+            )
+            session.add(docker_client_cache)
+            session.add(client_cache)
+            session.commit()
+            session.close()
+
+        return docker_clients
 
     def reset(self):
+        session: Session = self.one_datastore.get_session()
+        docker_client_caches = list(session.exec(select(Cache).where(Cache.key == "docker_clients")).all())
+        for docker_client_cache in docker_client_caches:
+            docker_clients: List[DockerClient] = dill.loads(docker_client_cache.value)
+            for docker_client in docker_clients:
+                docker_client.compose.down()
+
         SQLModel.metadata.drop_all(self.one_datastore.engine)
         SQLModel.metadata.create_all(self.one_datastore.engine)
 
@@ -465,14 +578,15 @@ class OptimizationUseCase:
         session.exec(delete(Cache).where(Cache.key.startswith("results")))
         session.exec(delete(Cache).where(Cache.key == "objectives"))
 
-        client_caches = list(session.exec(select(Cache).where(Cache.key.startswith("clients"))).all())
+        client_caches = list(session.exec(select(Cache).where(Cache.key == "clients")).all())
         objective_caches = list(session.exec(select(Cache).where(Cache.key == "objectives")).all())
 
-        clients: Dict[str, OptimizationClient] = {}
-        for client_cache in client_caches:
-            client: OptimizationClient = dill.loads(client_cache.value)
-            clients[client.id] = client
-            variables.update(client.variables)
+        if len(client_caches) == 1:
+            clients: Dict[str, OptimizationClient] = dill.loads(client_caches[0].value)
+            for client in clients.values():
+                variables.update(client.variables)
+        else:
+            raise ValueError(f"Number of client caches must be 1, but got {len(client_caches)}.")
 
         if len(objective_caches) == 0:
             objective_cache: Cache = Cache(

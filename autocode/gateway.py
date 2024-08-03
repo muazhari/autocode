@@ -2,8 +2,7 @@ from http import HTTPStatus
 
 from httpx import AsyncClient, AsyncHTTPTransport
 
-from autocode.model import OptimizationEvaluatePrepareRequest, OptimizationClient, \
-    OptimizationEvaluateRunRequest, OptimizationEvaluateRunResponse
+from autocode.model import OptimizationEvaluatePrepareRequest, OptimizationClient, OptimizationEvaluateRunResponse
 
 
 class EvaluationGateway:
@@ -24,14 +23,13 @@ class EvaluationGateway:
         if response.status_code != HTTPStatus.OK:
             raise ValueError(f"Error: {response.json()}")
 
-    async def evaluate_run(self, client: OptimizationClient, request: OptimizationEvaluateRunRequest):
+    async def evaluate_run(self, client: OptimizationClient):
         client: AsyncClient = AsyncClient(
             base_url=f"http://{client.host}:{client.port}/apis",
             transport=AsyncHTTPTransport(retries=30)
         )
-        response = await client.post(
+        response = await client.get(
             url="/optimizations/evaluates/runs",
-            json=request.model_dump(mode="json"),
             timeout=None
         )
 

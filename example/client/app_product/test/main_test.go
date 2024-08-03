@@ -219,9 +219,7 @@ func Test(t *testing.T) {
 		application,
 		"host.docker.internal",
 		10000,
-		"localhost",
 		11000,
-		"app_product",
 		[]string{},
 	)
 	optimization.Prepare()

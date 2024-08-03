@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Body
+from fastapi import APIRouter, Body, Request
 
 from autocode.model import OptimizationPrepareRequest, OptimizationPrepareResponse
 from autocode.use_case import OptimizationUseCase
@@ -20,9 +20,10 @@ class OptimizationController:
             methods=["POST"]
         )
 
-    def prepare(self, request: OptimizationPrepareRequest = Body()) -> OptimizationPrepareResponse:
+    def prepare(self, request: Request, body: OptimizationPrepareRequest = Body()) -> OptimizationPrepareResponse:
+        body.host = request.client.host
         response: OptimizationPrepareResponse = self.optimization_use_case.prepare(
-            request=request
+            request=body
         )
 
         return response

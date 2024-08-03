@@ -34,21 +34,30 @@ if clear_cache:
     st.cache_resource.clear()
     st.session_state.clear()
 
-client_placeholder = st.empty()
+st.subheader("Clients")
+client_df_placeholder = st.empty()
 
 while True:
     try:
         session: Session = one_datastore.get_session()
         objective_caches = list(session.exec(select(Cache).where(Cache.key == "objectives")).all())
-        client_caches = list(session.exec(select(Cache).where(Cache.key.startswith("clients"))).all())
+        client_caches = list(session.exec(select(Cache).where(Cache.key == "clients")).all())
         session.close()
     except Exception as e:
         print(e)
         time.sleep(0.01)
         continue
 
-    with client_placeholder:
-        st.subheader(f"Number of clients: {len(client_caches)}")
+    with client_df_placeholder:
+        if len(client_caches) > 0:
+            clients: Dict[str, OptimizationClient] = dill.loads(client_caches[0].value)
+            list_dict_client: List[Dict[str, Any]] = [client.model_dump(mode="json") for client in clients.values()]
+            client_df: pd.DataFrame = pd.DataFrame(list_dict_client)
+        else:
+            client_df: pd.DataFrame = pd.DataFrame()
+
+        client_df = client_df.astype(dtype=str)
+        st.dataframe(client_df, height=500)
 
     if len(objective_caches) > 0:
         break
@@ -57,11 +66,9 @@ while True:
 
 if len(objective_caches) == 0 and len(client_caches) == 0:
     st.write("Waiting for preparation data.")
-elif len(objective_caches) == 1 and len(client_caches) >= 1:
+elif len(objective_caches) == 1 and len(client_caches) == 1:
     objectives = dill.loads(objective_caches[0].value)
-    for client_cache in client_caches:
-        client: OptimizationClient = dill.loads(client_cache.value)
-        clients[client.id] = client
+    for client in clients.values():
         variables.update(client.variables)
     for index, objective in enumerate(objectives):
         st.subheader(f"Objective {index + 1}")
