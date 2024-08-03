@@ -141,7 +141,7 @@ class OptimizationClient(BaseModel):
 
 class OptimizationPrepareRequest(BaseModel):
     variables: Dict[str, OptimizationBinary | OptimizationChoice | OptimizationInteger | OptimizationReal]
-    host: Optional[str]
+    host: Optional[str] = Field(default=None)
     port: int
 
     def __init__(self, **data):

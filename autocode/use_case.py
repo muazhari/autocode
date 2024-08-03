@@ -113,7 +113,7 @@ class OptimizationProblem(ElementwiseProblem):
                 raise ValueError(f"Variable type '{variable_type}' is not supported.")
 
         super().__init__(
-            n_var=len(self.vars),
+            vars=self.vars,
             *args,
             **kwargs
         )
@@ -389,7 +389,7 @@ class OptimizationUseCase:
 
         if len(client_caches) == 1:
             clients: Dict[str, OptimizationClient] = dill.loads(client_caches[0].value)
-            client: OptimizationClient = [client for client in clients.values() if client.name == request.name][0]
+            client: OptimizationClient = [client for client in clients.values() if client.host == request.host][0]
         else:
             raise ValueError(f"Number of client_caches must be 1, but got {len(client_caches)}.")
 
@@ -398,85 +398,88 @@ class OptimizationUseCase:
                 client_name_to_variable_caches[0].value
             )
         else:
-            raise ValueError(
-                f"Number of client_name_to_variable_caches must be 1, but got {len(client_name_to_variable_caches)}."
+            client_name_to_variables: Dict[str, Dict[str, OptimizationVariable]] = {}
+            client_name_to_variable_cache: Cache = Cache(
+                key="client_name_to_variables",
+                value=dill.dumps(client_name_to_variables)
             )
+            client_name_to_variable_caches.append(client_name_to_variable_cache)
+
+        client.port = request.port
 
         response: OptimizationPrepareResponse = OptimizationPrepareResponse(
             variables=client.variables,
         )
-        if client_name_to_variables.get(request.name, None) is not None:
-            response.variables = client_name_to_variables[request.name]
-            return response
+        if client_name_to_variables.get(client.name, None) is not None:
+            response.variables = client_name_to_variables[client.name]
+            client.variables = response.variables
+        else:
+            list_variation_futures: List[Coroutine] = []
+            list_variables: List[OptimizationVariable] = []
+            list_functions: List[OptimizationValueFunction] = []
 
-        list_variation_futures: List[Coroutine] = []
-        list_variables: List[OptimizationVariable] = []
-        list_functions: List[OptimizationValueFunction] = []
+            for variable_id, variable in client.variables.items():
+                variable.set_client_id(client.id)
 
-        for variable_id, variable in client.variables.items():
-            variable.set_client_id(client.id)
+                if type(variable) is OptimizationChoice:
+                    for option_id, option in variable.options.items():
+                        if option.type == "OptimizationValueFunction":
+                            function: OptimizationValueFunction = option.data
+                            future_variation: Coroutine = self.llm_use_case.generate_function_variation(function)
+                            list_variation_futures.append(future_variation)
+                            list_variables.append(variable)
+                            list_functions.append(function)
 
-            if type(variable) is OptimizationChoice:
-                for option_id, option in variable.options.items():
-                    if option.type == "OptimizationValueFunction":
-                        function: OptimizationValueFunction = option.data
-                        future_variation: Coroutine = self.llm_use_case.generate_function_variation(function)
-                        list_variation_futures.append(future_variation)
-                        list_variables.append(variable)
-                        list_functions.append(function)
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
 
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
+            list_variations = asyncio.get_event_loop().run_until_complete(asyncio.gather(*list_variation_futures))
+            for variable, variations, function in zip(list_variables, list_variations, list_functions):
+                for variation in variations:
+                    new_option_id: str = str(uuid.uuid4())
+                    copied_function: OptimizationValueFunction = copy.deepcopy(function)
+                    new_function_name: str = "variation_" + uuid.uuid4().hex
+                    split_function_name = copied_function.name.split(".")
+                    split_function_name[-1] = new_function_name
+                    copied_function.name = ".".join(split_function_name)
+                    copied_function.string = re.sub(
+                        pattern=r"func (.+?)\(",
+                        repl="func " + new_function_name + "(",
+                        string=variation.variation
+                    )
+                    variable.options[new_option_id] = OptimizationValue(
+                        id=new_option_id,
+                        data=copied_function
+                    )
 
-        list_variations = asyncio.get_event_loop().run_until_complete(asyncio.gather(*list_variation_futures))
-        for variable, variations, function in zip(list_variables, list_variations, list_functions):
-            for variation in variations:
-                new_option_id: str = str(uuid.uuid4())
-                copied_function: OptimizationValueFunction = copy.deepcopy(function)
-                new_function_name: str = "variation_" + uuid.uuid4().hex
-                split_function_name = copied_function.name.split(".")
-                split_function_name[-1] = new_function_name
-                copied_function.name = ".".join(split_function_name)
-                copied_function.string = re.sub(
-                    pattern=r"func (.+?)\(",
-                    repl="func " + new_function_name + "(",
-                    string=variation.variation
-                )
-                variable.options[new_option_id] = OptimizationValue(
-                    id=new_option_id,
-                    data=copied_function
-                )
+            list_functions: List[OptimizationValueFunction] = []
+            list_scoring_futures: List[Coroutine] = []
+            for variable_id, variable in client.variables.items():
+                if type(variable) is OptimizationChoice:
+                    for option_id, option in variable.options.items():
+                        if option.type == "OptimizationValueFunction":
+                            future_scoring: Coroutine = self.llm_use_case.function_scoring(option.data)
+                            list_scoring_futures.append(future_scoring)
+                            list_functions.append(option.data)
 
-        list_functions: List[OptimizationValueFunction] = []
-        list_scoring_futures: List[Coroutine] = []
-        for variable_id, variable in client.variables.items():
-            if type(variable) is OptimizationChoice:
-                for option_id, option in variable.options.items():
-                    if option.type == "OptimizationValueFunction":
-                        future_scoring: Coroutine = self.llm_use_case.function_scoring(option.data)
-                        list_scoring_futures.append(future_scoring)
-                        list_functions.append(option.data)
+            list_scores = asyncio.get_event_loop().run_until_complete(asyncio.gather(*list_scoring_futures))
+            for function, score in zip(list_functions, list_scores):
+                function.understandability = score[0].understandability
+                function.error_potentiality = score[0].error_potentiality
+                function.readability = score[0].readability
+                function.complexity = score[0].complexity
+                function.modularity = score[0].modularity
+                function.overall_maintainability = score[0].overall_maintainability
 
-        list_scores = asyncio.get_event_loop().run_until_complete(asyncio.gather(*list_scoring_futures))
-        for function, score in zip(list_functions, list_scores):
-            function.understandability = score[0].understandability
-            function.error_potentiality = score[0].error_potentiality
-            function.readability = score[0].readability
-            function.complexity = score[0].complexity
-            function.modularity = score[0].modularity
-            function.overall_maintainability = score[0].overall_maintainability
+        for current_client in clients.values():
+            if current_client.name == client.name:
+                current_client.variables = response.variables
+                client_name_to_variables[client.name] = response.variables
 
-        session: Session = self.one_datastore.get_session()
-        client_cache: Cache = Cache(
-            key=f"clients",
-            value=dill.dumps(clients)
-        )
-        client_name_to_variable_cache: Cache = Cache(
-            key="client_name_to_variables",
-            value=dill.dumps(client_name_to_variables)
-        )
-        session.add(client_cache)
-        session.add(client_name_to_variable_cache)
+        client_caches[0].value = dill.dumps(clients)
+        client_name_to_variable_caches[0].value = dill.dumps(client_name_to_variables)
+        session.add(client_caches[0])
+        session.add(client_name_to_variable_caches[0])
         session.commit()
         session.close()
 
@@ -502,7 +505,7 @@ class OptimizationUseCase:
                     client: OptimizationClient = OptimizationClient(
                         variables={},
                         host=networks[0].ip_address,
-                        port=11000,
+                        port=0,
                         name=container.name.removeprefix(f"{worker_id}-"),
                         worker_id=worker_id
                     )
@@ -513,8 +516,6 @@ class OptimizationUseCase:
                 value=dill.dumps(clients)
             )
             session.add(client_cache)
-            session.commit()
-            session.close()
         else:
             docker_clients: List[DockerClient] = []
             clients: Dict[str, OptimizationClient] = {}
@@ -533,7 +534,7 @@ class OptimizationUseCase:
                     client: OptimizationClient = OptimizationClient(
                         variables={},
                         host=networks[0].ip_address,
-                        port=11000,
+                        port=0,
                         name=container.name.removeprefix(f"{worker_id}-"),
                         worker_id=worker_id
                     )
@@ -550,8 +551,9 @@ class OptimizationUseCase:
             )
             session.add(docker_client_cache)
             session.add(client_cache)
-            session.commit()
-            session.close()
+
+        session.commit()
+        session.close()
 
         return docker_clients
 
@@ -586,7 +588,7 @@ class OptimizationUseCase:
             for client in clients.values():
                 variables.update(client.variables)
         else:
-            raise ValueError(f"Number of client caches must be 1, but got {len(client_caches)}.")
+            raise ValueError(f"Number of clients caches must be 1, but got {len(client_caches)}.")
 
         if len(objective_caches) == 0:
             objective_cache: Cache = Cache(
@@ -641,7 +643,7 @@ class OptimizationUseCase:
     ) -> Result:
         runner: OptimizationProblemRunner = OptimizationProblemRunner()
 
-        problem = OptimizationProblem(
+        problem: OptimizationProblem = OptimizationProblem(
             application_setting=self.application_setting,
             optimization_gateway=self.evaluation_gateway,
             objectives=objectives,
