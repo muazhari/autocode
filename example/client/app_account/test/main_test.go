@@ -194,10 +194,10 @@ func Test(t *testing.T) {
 			"a",
 			[]any{a0, a1},
 		),
-		autocode.NewOptimizationChoice(
-			"b",
-			[]any{b0, b1, b2},
-		),
+		//autocode.NewOptimizationChoice(
+		//	"b",
+		//	[]any{b0, b1, b2},
+		//),
 		//autocode.NewOptimizationChoice(
 		//	"c",
 		//	[]any{c0, c1},

@@ -8,6 +8,7 @@ services:
       - go
       - test
       - ./test
+      - -timeout=0
     volumes:
       - ./client/app_account:/workdir
     extra_hosts:
@@ -23,6 +24,7 @@ services:
       - go
       - test
       - ./test
+      - -timeout=0
     volumes:
       - ./client/app_product:/workdir
     extra_hosts:

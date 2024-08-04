@@ -1,11 +1,16 @@
 from sqlalchemy import create_engine
 from sqlmodel import Session
 
+from autocode.setting import ApplicationSetting
+
 
 class OneDatastore:
 
-    def __init__(self):
-        self.url = "sqlite:///database.db?cache=shared"
+    def __init__(
+            self,
+            application_setting: ApplicationSetting,
+    ):
+        self.url = f"sqlite:///{application_setting.absolute_path}/database.db?cache=shared"
         self.engine = create_engine(
             url=self.url,
             isolation_level="SERIALIZABLE"

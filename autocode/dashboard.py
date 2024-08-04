@@ -14,7 +14,7 @@ from autocode import OptimizationUseCase
 from autocode.container import ApplicationContainer
 from autocode.datastore import OneDatastore
 from autocode.model import Cache, OptimizationObjective, OptimizationVariable, OptimizationClient, OptimizationValue, \
-    OptimizationBinary, OptimizationChoice, OptimizationInteger, OptimizationReal
+    OptimizationBinary, OptimizationChoice, OptimizationInteger, OptimizationReal, OptimizationValueFunction
 
 container: ApplicationContainer = ApplicationContainer()
 one_datastore: OneDatastore = container.datastores.one()
@@ -41,7 +41,7 @@ while True:
     try:
         session: Session = one_datastore.get_session()
         objective_caches = list(session.exec(select(Cache).where(Cache.key == "objectives")).all())
-        client_caches = list(session.exec(select(Cache).where(Cache.key == "clients")).all())
+        client_caches = list(session.exec(select(Cache).where(Cache.key.startswith("clients"))).all())
         session.close()
     except Exception as e:
         print(e)
@@ -49,13 +49,12 @@ while True:
         continue
 
     with client_df_placeholder:
-        if len(client_caches) > 0:
-            clients: Dict[str, OptimizationClient] = dill.loads(client_caches[0].value)
-            list_dict_client: List[Dict[str, Any]] = [client.model_dump(mode="json") for client in clients.values()]
-            client_df: pd.DataFrame = pd.DataFrame(list_dict_client)
-        else:
-            client_df: pd.DataFrame = pd.DataFrame()
+        for client_cache in client_caches:
+            client: OptimizationClient = dill.loads(client_cache.value)
+            variables.update(client.variables)
+            clients[client.id] = client
 
+        client_df: pd.DataFrame = pd.DataFrame([client.model_dump(mode="json") for client in clients.values()])
         client_df = client_df.astype(dtype=str)
         st.dataframe(client_df, height=500)
 
@@ -66,10 +65,8 @@ while True:
 
 if len(objective_caches) == 0 and len(client_caches) == 0:
     st.write("Waiting for preparation data.")
-elif len(objective_caches) == 1 and len(client_caches) == 1:
+elif len(objective_caches) == 1 and len(client_caches) >= 1:
     objectives = dill.loads(objective_caches[0].value)
-    for client in clients.values():
-        variables.update(client.variables)
     for index, objective in enumerate(objectives):
         st.subheader(f"Objective {index + 1}")
         st.radio(
@@ -88,7 +85,7 @@ elif len(objective_caches) == 1 and len(client_caches) == 1:
         )
         weights.append(weight)
 else:
-    st.error("Preparation data cache should be exactly 1.")
+    st.error("Preparation data cache is not valid.")
 
 plot_0_placeholder = st.empty()
 plot_1_placeholder = st.empty()
@@ -157,8 +154,8 @@ while True:
                 else:
                     value: OptimizationValue = variable_value
 
-                if value.type == "OptimizationValueFunction":
-                    variable_value = value.data.model_dump(mode="python")
+                if value.type == OptimizationValueFunction.__name__:
+                    variable_value = value.data.model_dump(mode="json")
                 else:
                     variable_value = value.data
 

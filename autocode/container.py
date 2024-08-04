@@ -22,8 +22,11 @@ class GatewayContainer(DeclarativeContainer):
 
 
 class DatastoreContainer(DeclarativeContainer):
+    settings = providers.DependenciesContainer()
+
     one = providers.Singleton(
-        OneDatastore
+        OneDatastore,
+        application_setting=settings.application
     )
 
 
@@ -78,6 +81,7 @@ class ApplicationContainer(DeclarativeContainer):
     )
     datastores = providers.Container(
         DatastoreContainer,
+        settings=settings
     )
     use_cases = providers.Container(
         UseCaseContainer,

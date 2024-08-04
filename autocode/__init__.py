@@ -28,7 +28,6 @@ class Optimization:
             dashboard_port: int,
     ):
         super().__init__()
-        self.current_path = os.path.dirname(os.path.realpath(__file__))
         if not ray.is_initialized():
             ray.init(
                 dashboard_host=server_host,
@@ -89,9 +88,9 @@ class Optimization:
         self.dashboard.start()
 
     def run_dashboard(self):
-        dashboard_port: int = self.application_container.settings.application().dashboard_port
+        settings: ApplicationSetting = self.application_container.settings.application()
         os.system(
-            f"python3 -m streamlit run {self.current_path}/dashboard.py --server.port {dashboard_port} > dashboard.log"
+            f"python3 -m streamlit run {settings.absolute_path}/dashboard.py --server.port {settings.dashboard_port} > dashboard.log"
         )
 
     def run_server(self):

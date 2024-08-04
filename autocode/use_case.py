@@ -2,11 +2,12 @@ import asyncio
 import copy
 import re
 import uuid
-from typing import Dict, List, Callable, Any, Coroutine
+from typing import Dict, List, Callable, Any, Coroutine, Optional
 
 import dill
 import numpy as np
 import ray
+import sqlalchemy.exc
 from langchain_core.output_parsers import PydanticToolsParser
 from langchain_core.prompts import ChatPromptTemplate, SystemMessagePromptTemplate, HumanMessagePromptTemplate, \
     AIMessagePromptTemplate
@@ -51,6 +52,7 @@ class OptimizationCallback(Callback):
 
     def notify(self, algorithm: Algorithm):
         session: Session = self.one_datastore.get_session()
+        session.begin()
         result: Result = algorithm.result()
         del result.algorithm
         del result.problem
@@ -316,7 +318,7 @@ class LlmUseCase:
                 """),
                 HumanMessagePromptTemplate.from_template("""
                 Generate 1 variations of the following code using "CodeVariation" tools.
-                Ensure do not using libraries.
+                If using libraries, ensure to import them.
                 Do not change the function parameters.
                 """),
             ])
@@ -382,37 +384,29 @@ class OptimizationUseCase:
 
     def prepare(self, request: OptimizationPrepareRequest) -> OptimizationPrepareResponse:
         session: Session = self.one_datastore.get_session()
-        client_caches: List[Cache] = list(session.exec(select(Cache).where(Cache.key == "clients")).all())
-        client_name_to_variable_caches: List[Cache] = list(
-            session.exec(select(Cache).where(Cache.key == "client_name_to_variables")).all()
-        )
+        session.begin()
+        client_caches: List[Cache] = list(session.exec(select(Cache).where(Cache.key.startswith("clients"))).all())
 
-        if len(client_caches) == 1:
-            clients: Dict[str, OptimizationClient] = dill.loads(client_caches[0].value)
-            client: OptimizationClient = [client for client in clients.values() if client.host == request.host][0]
-        else:
-            raise ValueError(f"Number of client_caches must be 1, but got {len(client_caches)}.")
+        client_name_to_variables: Dict[
+            str, Dict[str, OptimizationBinary | OptimizationChoice | OptimizationInteger | OptimizationReal]
+        ] = {}
 
-        if len(client_name_to_variable_caches) == 1:
-            client_name_to_variables: Dict[str, Dict[str, OptimizationVariable]] = dill.loads(
-                client_name_to_variable_caches[0].value
-            )
-        else:
-            client_name_to_variables: Dict[str, Dict[str, OptimizationVariable]] = {}
-            client_name_to_variable_cache: Cache = Cache(
-                key="client_name_to_variables",
-                value=dill.dumps(client_name_to_variables)
-            )
-            client_name_to_variable_caches.append(client_name_to_variable_cache)
+        client: Optional[OptimizationClient] = None
+        for client_cache in client_caches:
+            current_client: OptimizationClient = dill.loads(client_cache.value)
+            if current_client.variables != {}:
+                client_name_to_variables[current_client.name] = current_client.variables
+            if current_client.host == request.host:
+                client = current_client
+                client.variables = request.variables
+                client.port = request.port
+                break
 
-        client.port = request.port
+        if client is None:
+            raise ValueError(f"Client with host '{request.host}' not found.")
 
-        response: OptimizationPrepareResponse = OptimizationPrepareResponse(
-            variables=client.variables,
-        )
         if client_name_to_variables.get(client.name, None) is not None:
-            response.variables = client_name_to_variables[client.name]
-            client.variables = response.variables
+            client.variables = client_name_to_variables[client.name]
         else:
             list_variation_futures: List[Coroutine] = []
             list_variables: List[OptimizationVariable] = []
@@ -421,9 +415,9 @@ class OptimizationUseCase:
             for variable_id, variable in client.variables.items():
                 variable.set_client_id(client.id)
 
-                if type(variable) is OptimizationChoice:
+                if variable.type == OptimizationChoice.__name__:
                     for option_id, option in variable.options.items():
-                        if option.type == "OptimizationValueFunction":
+                        if option.type == OptimizationValueFunction.__name__:
                             function: OptimizationValueFunction = option.data
                             future_variation: Coroutine = self.llm_use_case.generate_function_variation(function)
                             list_variation_futures.append(future_variation)
@@ -452,12 +446,12 @@ class OptimizationUseCase:
                         data=copied_function
                     )
 
-            list_functions: List[OptimizationValueFunction] = []
+            list_functions: List[str] = []
             list_scoring_futures: List[Coroutine] = []
             for variable_id, variable in client.variables.items():
-                if type(variable) is OptimizationChoice:
+                if variable.type == OptimizationChoice.__name__:
                     for option_id, option in variable.options.items():
-                        if option.type == "OptimizationValueFunction":
+                        if option.type == OptimizationValueFunction.__name__:
                             future_scoring: Coroutine = self.llm_use_case.function_scoring(option.data)
                             list_scoring_futures.append(future_scoring)
                             list_functions.append(option.data)
@@ -471,32 +465,37 @@ class OptimizationUseCase:
                 function.modularity = score[0].modularity
                 function.overall_maintainability = score[0].overall_maintainability
 
-        for current_client in clients.values():
+        for client_cache in client_caches:
+            current_client: OptimizationClient = dill.loads(client_cache.value)
             if current_client.name == client.name:
-                current_client.variables = response.variables
-                client_name_to_variables[client.name] = response.variables
+                current_client.variables = client.variables
+                client_cache.value = dill.dumps(current_client)
+                session.add(client_cache)
 
-        client_caches[0].value = dill.dumps(clients)
-        client_name_to_variable_caches[0].value = dill.dumps(client_name_to_variables)
-        session.add(client_caches[0])
-        session.add(client_name_to_variable_caches[0])
         session.commit()
         session.close()
+
+        response: OptimizationPrepareResponse = OptimizationPrepareResponse(
+            variables=client.variables,
+        )
 
         return response
 
     def deploy(self, compose_files: List[str]) -> List[DockerClient]:
         session: Session = self.one_datastore.get_session()
-        docker_client_caches = list(session.exec(select(Cache).where(Cache.key == "docker_clients")).all())
-        if len(docker_client_caches) == 1:
-            session.exec(delete(Cache).where(Cache.key == "clients"))
-            session.exec(delete(Cache).where(Cache.key == "client_name_to_variables"))
-            session.commit()
-            clients: Dict[str, OptimizationClient] = {}
-            docker_clients: List[DockerClient] = dill.loads(docker_client_caches[0].value)
-            for docker_client in docker_clients:
+        session.begin()
+        docker_client_caches: List[Cache] = list(
+            session.exec(select(Cache).where(Cache.key.startswith("docker_clients"))).all()
+        )
+        docker_clients: List[DockerClient] = []
+        if len(docker_client_caches) > 0:
+            session.exec(delete(Cache).where(Cache.key.startswith("clients")))
+            for docker_client_cache in docker_client_caches:
+                docker_client: DockerClient = dill.loads(docker_client_cache.value)
                 worker_id: str = docker_client.client_config.compose_project_name
+                docker_client.client_config.compose_files = compose_files
                 docker_client.compose.up(
+                    force_recreate=True,
                     detach=True,
                     build=True
                 )
@@ -509,16 +508,14 @@ class OptimizationUseCase:
                         name=container.name.removeprefix(f"{worker_id}-"),
                         worker_id=worker_id
                     )
-                    clients[client.id] = client
+                    client_cache: Cache = Cache(
+                        key=f"clients_{client.id}",
+                        value=dill.dumps(client)
+                    )
+                    session.add(client_cache)
+                session.add(docker_client_cache)
                 docker_clients.append(docker_client)
-            client_cache: Cache = Cache(
-                key="clients",
-                value=dill.dumps(clients)
-            )
-            session.add(client_cache)
         else:
-            docker_clients: List[DockerClient] = []
-            clients: Dict[str, OptimizationClient] = {}
             for i in range(self.application_setting.num_cpus):
                 worker_id: str = uuid.uuid4().hex
                 docker_client = DockerClient(
@@ -538,19 +535,17 @@ class OptimizationUseCase:
                         name=container.name.removeprefix(f"{worker_id}-"),
                         worker_id=worker_id
                     )
-                    clients[client.id] = client
+                    client_cache: Cache = Cache(
+                        key=f"clients_{client.id}",
+                        value=dill.dumps(client)
+                    )
+                    session.add(client_cache)
+                docker_client_cache: Cache = Cache(
+                    key=f"docker_client_{uuid.uuid4()}",
+                    value=dill.dumps(docker_client)
+                )
+                session.add(docker_client_cache)
                 docker_clients.append(docker_client)
-
-            docker_client_cache: Cache = Cache(
-                key="docker_clients",
-                value=dill.dumps(docker_clients)
-            )
-            client_cache: Cache = Cache(
-                key="clients",
-                value=dill.dumps(clients)
-            )
-            session.add(docker_client_cache)
-            session.add(client_cache)
 
         session.commit()
         session.close()
@@ -559,14 +554,20 @@ class OptimizationUseCase:
 
     def reset(self):
         session: Session = self.one_datastore.get_session()
-        docker_client_caches = list(session.exec(select(Cache).where(Cache.key == "docker_clients")).all())
-        for docker_client_cache in docker_client_caches:
-            docker_clients: List[DockerClient] = dill.loads(docker_client_cache.value)
-            for docker_client in docker_clients:
-                docker_client.compose.down()
+        session.begin()
+        try:
+            docker_client_caches = list(session.exec(select(Cache).where(Cache.key.startswith("docker_clients"))).all())
+            for docker_client_cache in docker_client_caches:
+                docker_clients: List[DockerClient] = dill.loads(docker_client_cache.value)
+                for docker_client in docker_clients:
+                    docker_client.compose.down()
+        except sqlalchemy.exc.OperationalError:
+            pass
 
         SQLModel.metadata.drop_all(self.one_datastore.engine)
         SQLModel.metadata.create_all(self.one_datastore.engine)
+        session.commit()
+        session.close()
 
     def run(
             self,
@@ -577,18 +578,18 @@ class OptimizationUseCase:
     ):
         variables: Dict[str, OptimizationBinary | OptimizationChoice | OptimizationInteger | OptimizationReal] = {}
         session: Session = self.one_datastore.get_session()
+        session.begin()
         session.exec(delete(Cache).where(Cache.key.startswith("results")))
         session.exec(delete(Cache).where(Cache.key == "objectives"))
 
-        client_caches = list(session.exec(select(Cache).where(Cache.key == "clients")).all())
+        client_caches = list(session.exec(select(Cache).where(Cache.key.startswith("clients"))).all())
         objective_caches = list(session.exec(select(Cache).where(Cache.key == "objectives")).all())
 
-        if len(client_caches) == 1:
-            clients: Dict[str, OptimizationClient] = dill.loads(client_caches[0].value)
-            for client in clients.values():
-                variables.update(client.variables)
-        else:
-            raise ValueError(f"Number of clients caches must be 1, but got {len(client_caches)}.")
+        clients: Dict[str, OptimizationClient] = {}
+
+        for client_cache in client_caches:
+            client: OptimizationClient = dill.loads(client_cache.value)
+            clients[client.id] = client
 
         if len(objective_caches) == 0:
             objective_cache: Cache = Cache(
