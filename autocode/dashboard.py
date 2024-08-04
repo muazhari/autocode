@@ -26,6 +26,8 @@ client_caches: List[Cache] = []
 clients: Dict[str, OptimizationClient] = {}
 weights: List[float] = []
 
+session: Session = one_datastore.get_session()
+
 st.session_state.setdefault("old_result_caches", set())
 
 clear_cache = st.button("Clear cache")
@@ -39,10 +41,8 @@ client_df_placeholder = st.empty()
 
 while True:
     try:
-        session: Session = one_datastore.get_session()
         objective_caches = list(session.exec(select(Cache).where(Cache.key == "objectives")).all())
         client_caches = list(session.exec(select(Cache).where(Cache.key.startswith("clients"))).all())
-        session.close()
     except Exception as e:
         print(e)
         time.sleep(0.01)
@@ -96,7 +96,6 @@ plot_x_df_placeholder = st.empty()
 
 while True:
     try:
-        session: Session = one_datastore.get_session()
         query = select(Cache).where(Cache.key.startswith("results"))
         result_caches: Set[Cache] = set(session.exec(query).all())
         diff_result_caches = result_caches - st.session_state["old_result_caches"]
@@ -184,5 +183,4 @@ while True:
 
         st.session_state["old_result_caches"].add(cache)
 
-    session.close()
     time.sleep(0.01)

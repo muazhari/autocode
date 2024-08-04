@@ -265,10 +265,10 @@ class LlmUseCase:
             return state
 
         graph = StateGraph(ScoringState)
-        graph.set_entry_point(node_scoring_analyze.__name__)
-        graph.add_node(node_scoring_analyze.__name__, node_scoring_analyze)
+        graph.set_entry_point(node_scoring.__name__)
+        # graph.add_node(node_scoring_analyze.__name__, node_scoring_analyze)
         graph.add_node(node_scoring.__name__, node_scoring)
-        graph.add_edge(node_scoring_analyze.__name__, node_scoring.__name__)
+        # graph.add_edge(node_scoring_analyze.__name__, node_scoring.__name__)
         graph.set_finish_point(node_scoring.__name__)
         compiled_graph = graph.compile()
 
@@ -286,14 +286,15 @@ class LlmUseCase:
         def node_variation_analyze(state: VariationState):
             prompt = ChatPromptTemplate.from_messages([
                 SystemMessagePromptTemplate.from_template("""
-            You are target group of our study. The target group of our study are software quality analysts, researchers with a background in software quality, and software engineers that are involved with maintaining software. Some participants have up to 15 years of experience in quality assessments. In sum, 70 professionals participated. First, we invited selected experts to participate in the study. Second, we asked them to disseminate the study to interested and qualified colleagues. The survey was also promoted in relevant net- works. The participants are affiliated with companies including Airbus, Audi, BMW, Boston Consulting Group, Celonis, cesdo Software Quality GmbH, CQSE GmbH, Facebook, fortiss, itestra GmbH, Kinexon GmbH, MaibornWolff GmbH, Munich Re, Oracle, and three universities. However, 7 participants did not want to share their affiliation. During the study, we followed a systematic approach to assess software maintainability. The following steps were taken:
-            """),
+                You are target group of our study. The target group of our study are software quality analysts, researchers with a background in software quality, and software engineers that are involved with maintaining software. Some participants have up to 15 years of experience in quality assessments. In sum, 70 professionals participated. First, we invited selected experts to participate in the study. Second, we asked them to disseminate the study to interested and qualified colleagues. The survey was also promoted in relevant net- works. The participants are affiliated with companies including Airbus, Audi, BMW, Boston Consulting Group, Celonis, cesdo Software Quality GmbH, CQSE GmbH, Facebook, fortiss, itestra GmbH, Kinexon GmbH, MaibornWolff GmbH, Munich Re, Oracle, and three universities. However, 7 participants did not want to share their affiliation. During the study, we followed a systematic approach to assess software maintainability. The following steps were taken:
+                """),
                 HumanMessagePromptTemplate.from_template("""
-            Analyze the following code to propose many possible variations.
-            <code>
-            {code}
-            </code>
-            """),
+                Analyze the existing code to propose many possible variations.
+                You can use libraries in the possible variations.
+                <code>
+                {code}
+                </code>
+                """),
             ])
             chain = prompt | chat
             response = chain.invoke({
@@ -308,7 +309,8 @@ class LlmUseCase:
                 You are target group of our study. The target group of our study are software quality analysts, researchers with a background in software quality, and software engineers that are involved with maintaining software. Some participants have up to 15 years of experience in quality assessments. In sum, 70 professionals participated. First, we invited selected experts to participate in the study. Second, we asked them to disseminate the study to interested and qualified colleagues. The survey was also promoted in relevant networks. The participants are affiliated with companies including Airbus, Audi, BMW, Boston Consulting Group, Celonis, cesdo Software Quality GmbH, CQSE GmbH, Facebook, fortiss, itestra GmbH, Kinexon GmbH, MaibornWolff GmbH, Munich Re, Oracle, and three universities. However, 7 participants did not want to share their affiliation. During the study, we followed a systematic approach to assess software maintainability. The following steps were taken:
                 """),
                 HumanMessagePromptTemplate.from_template("""
-                Analyze the following code to propose many possible variations.
+                Analyze the existing code to propose many possible variations.
+                You can use libraries in the possible variations.
                 <code>
                 {code}
                 </code>
@@ -317,9 +319,10 @@ class LlmUseCase:
                 {analysis}
                 """),
                 HumanMessagePromptTemplate.from_template("""
-                Generate 1 variations of the following code using "CodeVariation" tools.
-                If using libraries, ensure to import them.
-                Do not change the function parameters.
+                Generate 1 variations of the code using "CodeVariation" tools.
+                If you are using libraries, ensure to import them.
+                Do not import existing "autocode" library.
+                Ensure function name, input parameters, and output parameters in the code variations are exactly as the existing code.
                 """),
             ])
             chain = prompt | chat.bind_tools(tools=tools) | parser
@@ -331,10 +334,10 @@ class LlmUseCase:
             return state
 
         graph = StateGraph(VariationState)
-        graph.set_entry_point(node_variation_analyze.__name__)
-        graph.add_node(node_variation_analyze.__name__, node_variation_analyze)
+        graph.set_entry_point(node_variation.__name__)
+        # graph.add_node(node_variation_analyze.__name__, node_variation_analyze)
         graph.add_node(node_variation.__name__, node_variation)
-        graph.add_edge(node_variation_analyze.__name__, node_variation.__name__)
+        # graph.add_edge(node_variation_analyze.__name__, node_variation.__name__)
         graph.set_finish_point(node_variation.__name__)
         compiled_graph = graph.compile()
 
@@ -469,6 +472,7 @@ class OptimizationUseCase:
             current_client: OptimizationClient = dill.loads(client_cache.value)
             if current_client.name == client.name:
                 current_client.variables = client.variables
+                current_client.port = client.port
                 client_cache.value = dill.dumps(current_client)
                 session.add(client_cache)
 
@@ -489,7 +493,7 @@ class OptimizationUseCase:
         )
         docker_clients: List[DockerClient] = []
         if len(docker_client_caches) > 0:
-            session.exec(delete(Cache).where(Cache.key.startswith("clients")))
+            client_caches: List[Cache] = list(session.exec(select(Cache).where(Cache.key.startswith("clients"))).all())
             for docker_client_cache in docker_client_caches:
                 docker_client: DockerClient = dill.loads(docker_client_cache.value)
                 worker_id: str = docker_client.client_config.compose_project_name
@@ -497,22 +501,17 @@ class OptimizationUseCase:
                 docker_client.compose.up(
                     force_recreate=True,
                     detach=True,
-                    build=True
+                    build=True,
                 )
                 for container in docker_client.compose.ps():
                     networks: List[NetworkInspectResult] = list(container.network_settings.networks.values())
-                    client: OptimizationClient = OptimizationClient(
-                        variables={},
-                        host=networks[0].ip_address,
-                        port=0,
-                        name=container.name.removeprefix(f"{worker_id}-"),
-                        worker_id=worker_id
-                    )
-                    client_cache: Cache = Cache(
-                        key=f"clients_{client.id}",
-                        value=dill.dumps(client)
-                    )
-                    session.add(client_cache)
+                    for client_cache in client_caches:
+                        client: OptimizationClient = dill.loads(client_cache.value)
+                        if client.name == container.name.removeprefix(
+                                f"{worker_id}-") and client.worker_id == worker_id:
+                            client.host = networks[0].ip_address
+                            client_cache.value = dill.dumps(client)
+                            session.add(client_cache)
                 session.add(docker_client_cache)
                 docker_clients.append(docker_client)
         else:
@@ -541,7 +540,7 @@ class OptimizationUseCase:
                     )
                     session.add(client_cache)
                 docker_client_cache: Cache = Cache(
-                    key=f"docker_client_{uuid.uuid4()}",
+                    key=f"docker_clients_{uuid.uuid4()}",
                     value=dill.dumps(docker_client)
                 )
                 session.add(docker_client_cache)
@@ -558,9 +557,8 @@ class OptimizationUseCase:
         try:
             docker_client_caches = list(session.exec(select(Cache).where(Cache.key.startswith("docker_clients"))).all())
             for docker_client_cache in docker_client_caches:
-                docker_clients: List[DockerClient] = dill.loads(docker_client_cache.value)
-                for docker_client in docker_clients:
-                    docker_client.compose.down()
+                docker_client: DockerClient = dill.loads(docker_client_cache.value)
+                docker_client.compose.down()
         except sqlalchemy.exc.OperationalError:
             pass
 
@@ -668,8 +666,8 @@ class OptimizationUseCase:
         )
 
         result: Result = minimize(
-            problem,
-            algorithm,
+            problem=problem,
+            algorithm=algorithm,
             callback=callback,
             seed=1,
             verbose=True
