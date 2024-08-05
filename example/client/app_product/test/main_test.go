@@ -70,7 +70,7 @@ func (self *Application) Evaluate(ctx *autocode.Optimization) *autocode.Optimiza
 	f_sum_latency += float64(t1.Sub(t0).Microseconds())
 	f_sum_output := float64(0)
 	f_sum_output += float64(ctx.GetValue("a").(int64))
-	f_sum_output += float64(ctx.GetValue("b").(int64))
+	//f_sum_output += float64(ctx.GetValue("b").(int64))
 	//f_sum_output += float64(ctx.GetValue("c").(int64))
 	//f_sum_output += float64(ctx.GetValue("d").(int64))
 	//f_sum_output += ctx.GetValue("e").(float64)
@@ -218,9 +218,11 @@ func Test(t *testing.T) {
 		variables,
 		application,
 		"host.docker.internal",
+		//"localhost",
 		10000,
 		11000,
 		[]string{},
+		//[]string{"-gcflags=all=-N -l"},
 	)
 	optimization.Prepare()
 }

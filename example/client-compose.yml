@@ -11,6 +11,8 @@ services:
       - -timeout=0
     volumes:
       - ./client/app_account:/workdir
+    deploy:
+      replicas: 2
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:
@@ -27,6 +29,8 @@ services:
       - -timeout=0
     volumes:
       - ./client/app_product:/workdir
+    deploy:
+      replicas: 2
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:

@@ -85,10 +85,14 @@ class OptimizationProblem(ElementwiseProblem):
         self.clients = clients
         self.evaluator = evaluator
 
+        self.client_to_worker_id_and_name: Dict[str, Dict[str, OptimizationClient]] = {}
         self.queue = Queue()
         worker_id_to_count: Dict[str, int] = {}
         for client in self.clients.values():
             worker_id_to_count[client.worker_id] = worker_id_to_count.get(client.worker_id, 0) + 1
+            if self.client_to_worker_id_and_name.get(client.worker_id, None) is None:
+                self.client_to_worker_id_and_name[client.worker_id] = {}
+            self.client_to_worker_id_and_name[client.worker_id][client.name] = client
 
         worker_id_sum: int = 0
         for worker_id in worker_id_to_count.keys():
@@ -125,29 +129,28 @@ class OptimizationProblem(ElementwiseProblem):
 
         client_to_variable_values: Dict[str, Dict[str, OptimizationValue]] = {}
         for variable_id, variable in self.variables.items():
-            value: Any = X[variable_id]
-            if type(value) is not OptimizationValue:
-                value: OptimizationValue = OptimizationValue(
-                    data=value
+            variable_value: Any = X[variable_id]
+            if type(variable_value) is not OptimizationValue:
+                variable_value: OptimizationValue = OptimizationValue(
+                    data=variable_value
                 )
             else:
-                value: OptimizationValue = value
+                variable_value: OptimizationValue = variable_value
 
             if client_to_variable_values.get(variable.get_client_id(), None) is None:
                 client_to_variable_values[variable.get_client_id()] = {}
-            client_to_variable_values[variable.get_client_id()][variable_id] = value
+            client_to_variable_values[variable.get_client_id()][variable_id] = variable_value
 
         prepare_futures: List[Coroutine] = []
         for client_id, variable_values in client_to_variable_values.items():
-            client: OptimizationClient = self.clients[client_id]
-            if client.worker_id != worker_id:
-                continue
+            variable_client: OptimizationClient = self.clients[client_id]
+            worker_client: OptimizationClient = self.client_to_worker_id_and_name[worker_id][variable_client.name]
 
             prepare_request: OptimizationEvaluatePrepareRequest = OptimizationEvaluatePrepareRequest(
                 variable_values=variable_values
             )
             prepare_response = self.optimization_gateway.evaluate_prepare(
-                client=client,
+                client=worker_client,
                 request=prepare_request
             )
             prepare_futures.append(prepare_response)
@@ -155,12 +158,12 @@ class OptimizationProblem(ElementwiseProblem):
         asyncio.get_event_loop().run_until_complete(asyncio.gather(*prepare_futures))
 
         run_futures: List[Coroutine] = []
-        for client in self.clients.values():
-            if client.worker_id != worker_id:
-                continue
+        for client_id in client_to_variable_values.keys():
+            variable_client: OptimizationClient = self.clients[client_id]
+            worker_client: OptimizationClient = self.client_to_worker_id_and_name[worker_id][variable_client.name]
 
             run_response = self.optimization_gateway.evaluate_run(
-                client=client,
+                client=worker_client,
             )
             run_futures.append(run_response)
 
@@ -321,8 +324,8 @@ class LlmUseCase:
                 HumanMessagePromptTemplate.from_template("""
                 Generate 1 variations of the code using "CodeVariation" tools.
                 If you are using libraries, ensure to import them.
-                Do not import existing "autocode" library.
-                Ensure function name, input parameters, and output parameters in the code variations are exactly as the existing code.
+                Ignore to import "autocode" library, it is already imported.
+                Ensure function name, input-output parameters, and input-output types in the code variations are exactly same as the existing code.
                 """),
             ])
             chain = prompt | chat.bind_tools(tools=tools) | parser
@@ -416,8 +419,6 @@ class OptimizationUseCase:
             list_functions: List[OptimizationValueFunction] = []
 
             for variable_id, variable in client.variables.items():
-                variable.set_client_id(client.id)
-
                 if variable.type == OptimizationChoice.__name__:
                     for option_id, option in variable.options.items():
                         if option.type == OptimizationValueFunction.__name__:
@@ -475,9 +476,13 @@ class OptimizationUseCase:
                 current_client.port = client.port
                 if current_client.host == request.host:
                     current_client.is_ready = True
+
+                for variable in current_client.variables.values():
+                    variable.set_client_id(current_client.id)
+
                 client_cache.value = dill.dumps(current_client)
                 session.add(client_cache)
-                
+
         session.commit()
         session.close()
 
@@ -490,63 +495,63 @@ class OptimizationUseCase:
     def deploy(self, compose_files: List[str]) -> List[DockerClient]:
         session: Session = self.one_datastore.get_session()
         session.begin()
+        session.exec(delete(Cache).where(Cache.key.startswith("results")))
+        session.exec(delete(Cache).where(Cache.key == "objectives"))
         docker_client_caches: List[Cache] = list(
             session.exec(select(Cache).where(Cache.key.startswith("docker_clients"))).all()
         )
         docker_clients: List[DockerClient] = []
-        if len(docker_client_caches) > 0:
-            client_caches: List[Cache] = list(session.exec(select(Cache).where(Cache.key.startswith("clients"))).all())
-            for docker_client_cache in docker_client_caches:
-                docker_client: DockerClient = dill.loads(docker_client_cache.value)
-                worker_id: str = docker_client.client_config.compose_project_name
-                docker_client.client_config.compose_files = compose_files
-                docker_client.compose.up(
-                    force_recreate=True,
-                    detach=True,
-                    build=True,
+        client_caches: List[Cache] = list(session.exec(select(Cache).where(Cache.key.startswith("clients"))).all())
+        for docker_client_cache in docker_client_caches:
+            docker_client: DockerClient = dill.loads(docker_client_cache.value)
+            worker_id: str = docker_client.client_config.compose_project_name
+            docker_client.client_config.compose_files = compose_files
+            docker_client.compose.up(
+                detach=True,
+                build=True,
+            )
+            for container in docker_client.compose.ps():
+                networks: List[NetworkInspectResult] = list(container.network_settings.networks.values())
+                for client_cache in client_caches:
+                    client: OptimizationClient = dill.loads(client_cache.value)
+                    if client.name == container.name.removeprefix(f"{worker_id}-") \
+                            and client.worker_id == worker_id:
+                        client.host = "0.0.0.0"
+                        client_cache.value = dill.dumps(client)
+                        session.add(client_cache)
+            session.add(docker_client_cache)
+            docker_clients.append(docker_client)
+
+        for i in range(self.application_setting.num_cpus - len(docker_client_caches)):
+            worker_id: str = uuid.uuid4().hex
+            docker_client = DockerClient(
+                compose_project_name=worker_id,
+                compose_files=compose_files,
+            )
+            docker_client.compose.up(
+                detach=True,
+                build=True
+            )
+            for container in docker_client.compose.ps():
+                networks: List[NetworkInspectResult] = list(container.network_settings.networks.values())
+                client: OptimizationClient = OptimizationClient(
+                    variables={},
+                    host="0.0.0.0",
+                    port=0,
+                    name=container.name.removeprefix(f"{worker_id}-"),
+                    worker_id=worker_id
                 )
-                for container in docker_client.compose.ps():
-                    networks: List[NetworkInspectResult] = list(container.network_settings.networks.values())
-                    for client_cache in client_caches:
-                        client: OptimizationClient = dill.loads(client_cache.value)
-                        if client.name == container.name.removeprefix(
-                                f"{worker_id}-") and client.worker_id == worker_id:
-                            client.host = networks[0].ip_address
-                            client_cache.value = dill.dumps(client)
-                            session.add(client_cache)
-                session.add(docker_client_cache)
-                docker_clients.append(docker_client)
-        else:
-            for i in range(self.application_setting.num_cpus):
-                worker_id: str = uuid.uuid4().hex
-                docker_client = DockerClient(
-                    compose_project_name=worker_id,
-                    compose_files=compose_files,
+                client_cache: Cache = Cache(
+                    key=f"clients_{client.id}",
+                    value=dill.dumps(client)
                 )
-                docker_client.compose.up(
-                    detach=True,
-                    build=True
-                )
-                for container in docker_client.compose.ps():
-                    networks: List[NetworkInspectResult] = list(container.network_settings.networks.values())
-                    client: OptimizationClient = OptimizationClient(
-                        variables={},
-                        host=networks[0].ip_address,
-                        port=0,
-                        name=container.name.removeprefix(f"{worker_id}-"),
-                        worker_id=worker_id
-                    )
-                    client_cache: Cache = Cache(
-                        key=f"clients_{client.id}",
-                        value=dill.dumps(client)
-                    )
-                    session.add(client_cache)
-                docker_client_cache: Cache = Cache(
-                    key=f"docker_clients_{uuid.uuid4()}",
-                    value=dill.dumps(docker_client)
-                )
-                session.add(docker_client_cache)
-                docker_clients.append(docker_client)
+                session.add(client_cache)
+            docker_client_cache: Cache = Cache(
+                key=f"docker_clients_{uuid.uuid4()}",
+                value=dill.dumps(docker_client)
+            )
+            session.add(docker_client_cache)
+            docker_clients.append(docker_client)
 
         session.commit()
         session.close()
@@ -589,6 +594,7 @@ class OptimizationUseCase:
 
         for client_cache in client_caches:
             client: OptimizationClient = dill.loads(client_cache.value)
+            variables.update(client.variables)
             clients[client.id] = client
 
         if len(objective_caches) == 0:
@@ -599,6 +605,12 @@ class OptimizationUseCase:
             session.add(objective_cache)
         else:
             raise ValueError(f"Number of objectives caches must be 0, but got {len(objective_caches)}.")
+
+        if len(variables) == 0:
+            raise ValueError("Number of variables must be greater than 0.")
+
+        if len(clients) == 0:
+            raise ValueError("Number of clients must be greater than 0.")
 
         session.commit()
         session.close()
