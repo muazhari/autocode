@@ -10,6 +10,7 @@ from fastapi import FastAPI
 from httpx import Client
 from pymoo.core.result import Result
 from python_on_whales import DockerClient
+from sqlmodel import SQLModel
 from starlette.middleware.cors import CORSMiddleware
 
 from autocode.container import ApplicationContainer
@@ -28,11 +29,13 @@ class Optimization:
             dashboard_port: int,
     ):
         super().__init__()
-        if not ray.is_initialized():
-            ray.init(
-                dashboard_host=server_host,
-                num_cpus=num_cpus
-            )
+        if ray.is_initialized():
+            ray.shutdown()
+            
+        ray.init(
+            dashboard_host=server_host,
+            num_cpus=num_cpus
+        )
         print("Available resources: ", ray.available_resources())
 
         self.application_container: ApplicationContainer = ApplicationContainer()
@@ -41,7 +44,8 @@ class Optimization:
         application_setting.server_host = server_host
         application_setting.server_port = server_port
         application_setting.dashboard_port = dashboard_port
-        self.reset()
+        one_datastore: OneDatastore = self.application_container.datastores.one()
+        SQLModel.metadata.create_all(one_datastore.engine)
 
         self.app: FastAPI = FastAPI()
         self.app.add_middleware(
@@ -110,7 +114,7 @@ class Optimization:
         optimization_use_case: OptimizationUseCase = self.application_container.use_cases.optimization()
         optimization_use_case.reset()
 
-    def deploy(self, compose_files: List[str]) -> List[DockerClient]:
+    def deploy(self, compose_files: List[str]) -> DockerClient:
         optimization_use_case: OptimizationUseCase = self.application_container.use_cases.optimization()
         return optimization_use_case.deploy(
             compose_files=compose_files

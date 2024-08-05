@@ -50,15 +50,16 @@ while True:
 
     clients = {}
     variables = {}
+    client_df_list: List[Dict[str, Any]] = []
     for client_cache in client_caches:
         client: OptimizationClient = dill.loads(client_cache.value)
         variables.update(client.variables)
         clients[client.id] = client
-
-    client_df: pd.DataFrame = pd.DataFrame([client.model_dump(mode="json") for client in clients.values()])
-    client_df = client_df.astype(dtype=str)
+        client_df_list.append(client.model_dump(mode="json"))
 
     with client_df_placeholder:
+        client_df: pd.DataFrame = pd.DataFrame(client_df_list)
+        client_df = client_df.astype(dtype=str)
         st.dataframe(client_df, height=500)
 
     if len(objective_caches) > 0:

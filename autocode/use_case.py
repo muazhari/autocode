@@ -2,6 +2,7 @@ import asyncio
 import copy
 import re
 import uuid
+from multiprocessing import Lock
 from typing import Dict, List, Callable, Any, Coroutine, Optional
 
 import dill
@@ -26,6 +27,7 @@ from pymoo.optimize import minimize
 from pymoo.visualization.pcp import PCP
 from pymoo.visualization.scatter import Scatter
 from python_on_whales import DockerClient
+from python_on_whales.components.compose.models import ComposeConfig
 from python_on_whales.components.container.models import NetworkInspectResult
 from ray.util.queue import Queue
 from sqlalchemy import delete
@@ -387,32 +389,45 @@ class OptimizationUseCase:
         self.evaluation_gateway = evaluation_gateway
         self.one_datastore = one_datastore
         self.application_setting = application_setting
+        self.client_locks: Dict[str, Lock] = {}
+        self.client_name_to_variables: Dict[
+            str, Dict[str, OptimizationBinary | OptimizationChoice | OptimizationInteger | OptimizationReal]
+        ] = {}
 
     def prepare(self, request: OptimizationPrepareRequest) -> OptimizationPrepareResponse:
         session: Session = self.one_datastore.get_session()
         session.begin()
-        client_caches: List[Cache] = list(session.exec(select(Cache).where(Cache.key.startswith("clients"))).all())
 
-        client_name_to_variables: Dict[
-            str, Dict[str, OptimizationBinary | OptimizationChoice | OptimizationInteger | OptimizationReal]
-        ] = {}
-
+        client_cache: Optional[Cache] = None
         client: Optional[OptimizationClient] = None
+        client_caches: List[Cache] = list(
+            session.exec(select(Cache).where(Cache.key.startswith("clients"))).all()
+        )
         for client_cache in client_caches:
             current_client: OptimizationClient = dill.loads(client_cache.value)
-            if current_client.variables != {}:
-                client_name_to_variables[current_client.name] = current_client.variables
             if current_client.host == request.host:
+                client = current_client
+                break
+
+        if self.client_locks.get(client.name, None) is None:
+            self.client_locks[client.name] = Lock()
+        self.client_locks[client.name].acquire()
+
+        client_caches: List[Cache] = list(
+            session.exec(select(Cache).where(Cache.key.startswith("clients"))).all()
+        )
+        for client_cache in client_caches:
+            current_client: OptimizationClient = dill.loads(client_cache.value)
+            if current_client.host == request.host:
+                client_cache = client_cache
                 client = current_client
                 client.variables = request.variables
                 client.port = request.port
+                client.is_ready = True
                 break
 
-        if client is None:
-            raise ValueError(f"Client with host '{request.host}' not found.")
-
-        if client_name_to_variables.get(client.name, None) is not None:
-            client.variables = client_name_to_variables[client.name]
+        if self.client_name_to_variables.get(client.name, None) is not None:
+            client.variables = self.client_name_to_variables[client.name]
         else:
             list_variation_futures: List[Coroutine] = []
             list_variables: List[OptimizationVariable] = []
@@ -469,22 +484,15 @@ class OptimizationUseCase:
                 function.modularity = score[0].modularity
                 function.overall_maintainability = score[0].overall_maintainability
 
-        for client_cache in client_caches:
-            current_client: OptimizationClient = dill.loads(client_cache.value)
-            if current_client.name == client.name:
-                current_client.variables = client.variables
-                current_client.port = client.port
-                if current_client.host == request.host:
-                    current_client.is_ready = True
+        for variable in client.variables.values():
+            variable.set_client_id(client.id)
 
-                for variable in current_client.variables.values():
-                    variable.set_client_id(current_client.id)
-
-                client_cache.value = dill.dumps(current_client)
-                session.add(client_cache)
-
+        client_cache.value = dill.dumps(client)
+        session.add(client_cache)
         session.commit()
         session.close()
+        self.client_name_to_variables[client.name] = client.variables
+        self.client_locks[client.name].release()
 
         response: OptimizationPrepareResponse = OptimizationPrepareResponse(
             variables=client.variables,
@@ -492,53 +500,55 @@ class OptimizationUseCase:
 
         return response
 
-    def deploy(self, compose_files: List[str]) -> List[DockerClient]:
+    def deploy(self, compose_files: List[str]) -> DockerClient:
         session: Session = self.one_datastore.get_session()
         session.begin()
         session.exec(delete(Cache).where(Cache.key.startswith("results")))
         session.exec(delete(Cache).where(Cache.key == "objectives"))
-        docker_client_caches: List[Cache] = list(
-            session.exec(select(Cache).where(Cache.key.startswith("docker_clients"))).all()
-        )
-        docker_clients: List[DockerClient] = []
+        docker_client_caches: List[Cache] = list(session.exec(select(Cache).where(Cache.key == "docker_clients")).all())
         client_caches: List[Cache] = list(session.exec(select(Cache).where(Cache.key.startswith("clients"))).all())
-        for docker_client_cache in docker_client_caches:
+        if len(docker_client_caches) == 1:
+            docker_client_cache: Cache = docker_client_caches[0]
             docker_client: DockerClient = dill.loads(docker_client_cache.value)
-            worker_id: str = docker_client.client_config.compose_project_name
-            docker_client.client_config.compose_files = compose_files
-            docker_client.compose.up(
-                detach=True,
-                build=True,
+        elif len(docker_client_caches) == 0:
+            docker_client: DockerClient = DockerClient(
+                compose_files=compose_files
             )
-            for container in docker_client.compose.ps():
-                networks: List[NetworkInspectResult] = list(container.network_settings.networks.values())
-                for client_cache in client_caches:
-                    client: OptimizationClient = dill.loads(client_cache.value)
-                    if client.name == container.name.removeprefix(f"{worker_id}-") \
-                            and client.worker_id == worker_id:
-                        client.host = "0.0.0.0"
-                        client_cache.value = dill.dumps(client)
-                        session.add(client_cache)
-            session.add(docker_client_cache)
-            docker_clients.append(docker_client)
+            docker_client_cache: Cache = Cache(
+                key="docker_clients",
+                value=dill.dumps(docker_client)
+            )
+        else:
+            raise ValueError(f"Number of docker client caches must be 0 or 1, but got {len(docker_client_caches)}.")
 
-        for i in range(self.application_setting.num_cpus - len(docker_client_caches)):
-            worker_id: str = uuid.uuid4().hex
-            docker_client = DockerClient(
-                compose_project_name=worker_id,
-                compose_files=compose_files,
-            )
-            docker_client.compose.up(
-                detach=True,
-                build=True
-            )
-            for container in docker_client.compose.ps():
-                networks: List[NetworkInspectResult] = list(container.network_settings.networks.values())
+        compose_config: ComposeConfig = docker_client.compose.config()
+        docker_client.compose.up(
+            scales={service: self.application_setting.num_cpus for service in compose_config.services.keys()},
+            detach=True,
+            build=True
+        )
+        for container in docker_client.compose.ps():
+            worker_id: str = re.findall(r"-(\d*)$", container.name)[0]
+            container_name: str = container.name.removesuffix(f"-{worker_id}")
+            networks: List[NetworkInspectResult] = list(container.network_settings.networks.values())
+
+            is_client_found: bool = False
+            for client_cache in client_caches:
+                client: OptimizationClient = dill.loads(client_cache.value)
+                if client.name == container_name and client.worker_id == worker_id:
+                    client.host = networks[0].ip_address
+                    client.port = client.port
+                    client.is_ready = False
+                    client_cache.value = dill.dumps(client)
+                    session.add(client_cache)
+                    is_client_found = True
+
+            if not is_client_found:
                 client: OptimizationClient = OptimizationClient(
                     variables={},
-                    host="0.0.0.0",
+                    name=container_name,
+                    host=networks[0].ip_address,
                     port=0,
-                    name=container.name.removeprefix(f"{worker_id}-"),
                     worker_id=worker_id
                 )
                 client_cache: Cache = Cache(
@@ -546,23 +556,19 @@ class OptimizationUseCase:
                     value=dill.dumps(client)
                 )
                 session.add(client_cache)
-            docker_client_cache: Cache = Cache(
-                key=f"docker_clients_{uuid.uuid4()}",
-                value=dill.dumps(docker_client)
-            )
-            session.add(docker_client_cache)
-            docker_clients.append(docker_client)
 
+        docker_client_cache.value = dill.dumps(docker_client)
+        session.add(docker_client_cache)
         session.commit()
         session.close()
 
-        return docker_clients
+        return docker_client
 
     def reset(self):
         session: Session = self.one_datastore.get_session()
         session.begin()
         try:
-            docker_client_caches = list(session.exec(select(Cache).where(Cache.key.startswith("docker_clients"))).all())
+            docker_client_caches = list(session.exec(select(Cache).where(Cache.key == "docker_clients")).all())
             for docker_client_cache in docker_client_caches:
                 docker_client: DockerClient = dill.loads(docker_client_cache.value)
                 docker_client.compose.down()
