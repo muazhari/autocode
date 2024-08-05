@@ -473,9 +473,11 @@ class OptimizationUseCase:
             if current_client.name == client.name:
                 current_client.variables = client.variables
                 current_client.port = client.port
+                if current_client.host == request.host:
+                    current_client.is_ready = True
                 client_cache.value = dill.dumps(current_client)
                 session.add(client_cache)
-
+                
         session.commit()
         session.close()
 

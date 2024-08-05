@@ -132,11 +132,12 @@ class OptimizationObjective(BaseModel):
 
 class OptimizationClient(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    variables: Dict[str, OptimizationBinary | OptimizationChoice | OptimizationInteger | OptimizationReal]
+    worker_id: str
+    is_ready: bool = Field(default=False)
     name: str
     host: str
     port: int
-    worker_id: str
+    variables: Dict[str, OptimizationBinary | OptimizationChoice | OptimizationInteger | OptimizationReal]
 
 
 class OptimizationPrepareRequest(BaseModel):
