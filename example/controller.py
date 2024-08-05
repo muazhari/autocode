@@ -8,7 +8,6 @@ from autocode import OptimizationUseCase, ApplicationContainer, ApplicationSetti
 
 os.environ["LANGCHAIN_TRACING_V2"] = "true"
 os.environ["LANGCHAIN_ENDPOINT"] = "https://api.smith.langchain.com"
-os.environ["LANGCHAIN_API_KEY"] = "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"
 os.environ["LANGCHAIN_PROJECT"] = "autocode"
 
 application_container: ApplicationContainer = ApplicationContainer()

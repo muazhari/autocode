@@ -9,6 +9,11 @@
               <option name="argv" value="notebook --no-browser --allow-root" />
               <option name="managed" value="true" />
               <option name="sdkName" value="" />
+              <option name="environmentVariables">
+                <map>
+                  <entry name="LANGCHAIN_API_KEY" value="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" />
+                </map>
+              </option>
             </JupyterConnectionParameters>
           </value>
         </entry>

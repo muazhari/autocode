@@ -270,10 +270,10 @@ class LlmUseCase:
             return state
 
         graph = StateGraph(ScoringState)
-        graph.set_entry_point(node_scoring.__name__)
-        # graph.add_node(node_scoring_analyze.__name__, node_scoring_analyze)
+        graph.set_entry_point(node_scoring_analyze.__name__)
+        graph.add_node(node_scoring_analyze.__name__, node_scoring_analyze)
         graph.add_node(node_scoring.__name__, node_scoring)
-        # graph.add_edge(node_scoring_analyze.__name__, node_scoring.__name__)
+        graph.add_edge(node_scoring_analyze.__name__, node_scoring.__name__)
         graph.set_finish_point(node_scoring.__name__)
         compiled_graph = graph.compile()
 
@@ -324,7 +324,6 @@ class LlmUseCase:
                 {analysis}
                 """),
                 HumanMessagePromptTemplate.from_template("""
-                Generate 1 variations of the code using "CodeVariation" tools.
                 If you are using libraries, ensure to import them.
                 Ignore to import "autocode" library, it is already imported.
                 Ensure function name, input-output parameters, and input-output types in the code variations are exactly same as the existing code.
@@ -339,10 +338,10 @@ class LlmUseCase:
             return state
 
         graph = StateGraph(VariationState)
-        graph.set_entry_point(node_variation.__name__)
-        # graph.add_node(node_variation_analyze.__name__, node_variation_analyze)
+        graph.set_entry_point(node_variation_analyze.__name__)
+        graph.add_node(node_variation_analyze.__name__, node_variation_analyze)
         graph.add_node(node_variation.__name__, node_variation)
-        # graph.add_edge(node_variation_analyze.__name__, node_variation.__name__)
+        graph.add_edge(node_variation_analyze.__name__, node_variation.__name__)
         graph.set_finish_point(node_variation.__name__)
         compiled_graph = graph.compile()
 
