@@ -31,7 +31,7 @@ class Optimization:
         super().__init__()
         if ray.is_initialized():
             ray.shutdown()
-            
+
         ray.init(
             dashboard_host=server_host,
             num_cpus=num_cpus
@@ -114,7 +114,7 @@ class Optimization:
         optimization_use_case: OptimizationUseCase = self.application_container.use_cases.optimization()
         optimization_use_case.reset()
 
-    def deploy(self, compose_files: List[str]) -> DockerClient:
+    def deploy(self, compose_files: List[str]) -> List[DockerClient]:
         optimization_use_case: OptimizationUseCase = self.application_container.use_cases.optimization()
         return optimization_use_case.deploy(
             compose_files=compose_files

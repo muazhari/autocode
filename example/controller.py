@@ -1,15 +1,11 @@
-import os
-
+import dotenv
 import uvicorn
 from fastapi import FastAPI
 from starlette.middleware.cors import CORSMiddleware
 
 from autocode import OptimizationUseCase, ApplicationContainer, ApplicationSetting
 
-os.environ["LANGCHAIN_TRACING_V2"] = "true"
-os.environ["LANGCHAIN_ENDPOINT"] = "https://api.smith.langchain.com"
-os.environ["LANGCHAIN_PROJECT"] = "autocode"
-
+dotenv.load_dotenv(dotenv.find_dotenv())
 application_container: ApplicationContainer = ApplicationContainer()
 application_setting: ApplicationSetting = application_container.settings.application()
 application_setting.num_cpus = 2

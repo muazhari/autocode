@@ -26,7 +26,7 @@ from pymoo.decomposition.asf import ASF
 from pymoo.optimize import minimize
 from pymoo.visualization.pcp import PCP
 from pymoo.visualization.scatter import Scatter
-from python_on_whales import DockerClient, Stack, Task
+from python_on_whales import DockerClient
 from python_on_whales.components.container.models import NetworkInspectResult
 from ray.util.queue import Queue
 from sqlalchemy import delete
@@ -159,10 +159,7 @@ class OptimizationProblem(ElementwiseProblem):
         asyncio.get_event_loop().run_until_complete(asyncio.gather(*prepare_futures))
 
         run_futures: List[Coroutine] = []
-        for client_id in client_to_variable_values.keys():
-            variable_client: OptimizationClient = self.clients[client_id]
-            worker_client: OptimizationClient = self.client_to_worker_id_and_name[worker_id][variable_client.name]
-
+        for worker_client in self.client_to_worker_id_and_name[worker_id].values():
             run_response = self.optimization_gateway.evaluate_run(
                 client=worker_client,
             )
@@ -323,7 +320,7 @@ class LlmUseCase:
                 {analysis}
                 """),
                 HumanMessagePromptTemplate.from_template("""
-                Generate 1 code variations using "CodeVariation" tools.
+                Generate necessary code variations using "CodeVariation" tools.
                 If you are using libraries, ensure to import them.
                 Ignore to import "autocode" library, it is already imported.
                 Ensure function name, input-output parameters, and input-output types in the code variations are exactly same as the existing code.
@@ -499,84 +496,86 @@ class OptimizationUseCase:
 
         return response
 
-    def deploy(self, compose_files: List[str]) -> DockerClient:
+    def deploy(self, compose_files: List[str]) -> List[DockerClient]:
         session: Session = self.one_datastore.get_session()
         session.begin()
         session.exec(delete(Cache).where(Cache.key.startswith("results")))
         session.exec(delete(Cache).where(Cache.key == "objectives"))
-        docker_client_caches: List[Cache] = list(session.exec(select(Cache).where(Cache.key == "docker_clients")).all())
         client_caches: List[Cache] = list(session.exec(select(Cache).where(Cache.key.startswith("clients"))).all())
-        if len(docker_client_caches) == 1:
-            docker_client_cache: Cache = docker_client_caches[0]
-            docker_client: DockerClient = dill.loads(docker_client_cache.value)
-        elif len(docker_client_caches) == 0:
-            docker_client: DockerClient = DockerClient(
-                compose_files=compose_files,
-                compose_project_name=uuid.uuid4().hex,
-            )
-            docker_client_cache: Cache = Cache(
-                key="docker_clients",
-                value=dill.dumps(docker_client)
-            )
-        else:
-            raise ValueError(f"Number of docker client caches must be 0 or 1, but got {len(docker_client_caches)}.")
+        docker_clients: List[DockerClient] = []
 
-        docker_client.compose.build()
-        docker_stack: Stack = docker_client.stack.deploy(
-            name=docker_client.client_config.compose_project_name,
-            compose_files=docker_client.client_config.compose_files,
-        )
-        for service in docker_stack.services():
-            service.scale(
-                new_scale=self.application_setting.num_cpus,
+        for i in range(self.application_setting.num_cpus):
+            worker_id: str = f"autocode-worker-{i}"
+            docker_client_caches: List[Cache] = list(
+                session.exec(select(Cache).where(Cache.key == f"docker_clients_{worker_id}")).all()
+            )
+            if len(docker_client_caches) == 1:
+                docker_client_cache: Cache = docker_client_caches[0]
+                docker_client: DockerClient = dill.loads(docker_client_cache.value)
+            elif len(docker_client_caches) == 0:
+                docker_client: DockerClient = DockerClient(
+                    compose_files=compose_files,
+                    compose_project_name=worker_id,
+                )
+                docker_client_cache: Cache = Cache(
+                    key=f"docker_clients_{worker_id}",
+                    value=dill.dumps(None)
+                )
+            else:
+                raise ValueError(f"Number of docker client caches must be 0 or 1, but got {len(docker_client_caches)}.")
+
+            docker_client.compose.stop()
+            docker_client.compose.up(
+                detach=True,
+                build=True,
             )
 
-        for container in docker_client.ps(filters={"name": rf"^{docker_client.client_config.compose_project_name}_"}):
-            task: Task = docker_client.task.inspect(x=container.config.labels["com.docker.swarm.task.id"])
-            worker_id: str = str(task.slot)
-            name: str = container.config.labels["com.docker.swarm.service.name"]
-            networks: List[NetworkInspectResult] = list(container.network_settings.networks.values())
+            for container in docker_client.compose.ps():
+                name: str = container.config.labels["com.docker.compose.service"]
+                networks: List[NetworkInspectResult] = list(container.network_settings.networks.values())
 
-            is_client_found: bool = False
-            for client_cache in client_caches:
-                client: OptimizationClient = dill.loads(client_cache.value)
-                if client.name == name and client.worker_id == worker_id:
-                    client.host = networks[0].ip_address
-                    client.port = client.port
-                    client.is_ready = False
-                    client_cache.value = dill.dumps(client)
+                is_client_found: bool = False
+                for client_cache in client_caches:
+                    client: OptimizationClient = dill.loads(client_cache.value)
+                    if client.name == name and client.worker_id == worker_id:
+                        client.host = networks[0].ip_address
+                        client.port = client.port
+                        client.is_ready = False
+                        client_cache.value = dill.dumps(client)
+                        session.add(client_cache)
+                        is_client_found = True
+
+                if not is_client_found:
+                    client: OptimizationClient = OptimizationClient(
+                        variables={},
+                        name=name,
+                        host=networks[0].ip_address,
+                        port=0,
+                        worker_id=worker_id
+                    )
+                    client_cache: Cache = Cache(
+                        key=f"clients_{client.id}",
+                        value=dill.dumps(client)
+                    )
                     session.add(client_cache)
-                    is_client_found = True
 
-            if not is_client_found:
-                client: OptimizationClient = OptimizationClient(
-                    variables={},
-                    name=name,
-                    host=networks[0].ip_address,
-                    port=0,
-                    worker_id=worker_id
-                )
-                client_cache: Cache = Cache(
-                    key=f"clients_{client.id}",
-                    value=dill.dumps(client)
-                )
-                session.add(client_cache)
+            docker_clients.append(docker_client)
+            docker_client_cache.value = dill.dumps(docker_client)
+            session.add(docker_client_cache)
 
-        docker_client_cache.value = dill.dumps(docker_client)
-        session.add(docker_client_cache)
         session.commit()
         session.close()
 
-        return docker_client
+        return docker_clients
 
     def reset(self):
         session: Session = self.one_datastore.get_session()
         session.begin()
         try:
-            docker_client_caches = list(session.exec(select(Cache).where(Cache.key == "docker_clients")).all())
+            docker_client_caches = list(session.exec(select(Cache).where(Cache.key.startswith("docker_clients"))).all())
             for docker_client_cache in docker_client_caches:
                 docker_client: DockerClient = dill.loads(docker_client_cache.value)
-                docker_client.stack.remove(x=docker_client.client_config.compose_project_name)
+                docker_client.compose.down()
         except sqlalchemy.exc.OperationalError:
             pass
 
