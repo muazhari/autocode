@@ -2,7 +2,7 @@
 
 # autocode
 
-Auto Code Improvement by Technical Metrics Optimization.
+Auto Code Improvement by Metrics Optimization.
 
 ## Description
 
@@ -13,7 +13,7 @@ companies.
 
 ## Features
 
-- Value-level Mixed-variable Many-objective Many-software Optimization.
+- Many-software Value-level Mixed-variable Many-objective Optimization.
 - Value types include bool, int, float, and choice (code).
 - Code scoring and variation generators using LLM.
 - Software cross-language support.
@@ -25,25 +25,29 @@ companies.
 1. Install the requirements
 
 ```bash
-pip install -r ./example/requirements.txt
+pip install autocode-py
 ```
 
-2. Prepare software to be processed as in the `./example/client` folder.
-3. Prepare deployment as in the `./example/client-compose.yml` file.
-3. Prepare controller as in the `./example/controller.ipynb` file.
-4. Run the process in controller.
-5. Open dashboard in `http://localhost:{dashboard_port}/` to see the process in real-time.
-6. Wait until the process is finished.
-7. Analyze and decide the best values.
+2. Prepare software to be processed as in the [`./example/client`](https://github.com/muazhari/autocode/tree/main/example/client) folder.
+3. Prepare deployment as in the [`./example/client/docker-compose.yml`](https://github.com/muazhari/autocode/blob/main/example/client/docker-compose.yml) file.
+4. Prepare controller as in the [`./example/controller.ipynb`](https://github.com/muazhari/autocode/blob/main/example/controller.ipynb) file.
+5. Instantiate `optimization` and execute `optimization.deploy()` in controller.
+6. Open dashboard in `http://localhost:{dashboard_port}/` to see the process in real-time.
+7. Wait until all client are ready (need to wait for long time because the libraries need to be re-download for each client & refresh the dashboard manually because of bug).
+8. Execute `optimization.run()` in controller.
+9. Wait until the run is finished.
+10. Analyze and decide the best values.
 
 ## Demo
 
-- [Controller](./example/controller.ipynb)
-- [Client](./example/client)
+- [Controller](https://github.com/muazhari/autocode/blob/main/example/controller.ipynb)
+- [Client](https://github.com/muazhari/autocode/tree/main/example/client)
 - Dashboard
-  ![demo-1.png](demo-1.png)
+  ![demo-1.png](https://github.com/muazhari/autocode/blob/main/demo-1.png?raw=true)
 
 ## Compatibility
 
-- Python 3.10
+- Python 3.10, 3.11
 - Linux
+- Docker
+- [autocode-go](https://github.com/muazhari/autocode-go)

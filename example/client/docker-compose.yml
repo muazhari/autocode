@@ -2,7 +2,7 @@ services:
   app-gateway:
     image: muazhari/autocode-example-app-gateway:latest
     build:
-      context: ./client/app_gateway
+      context: ./app_gateway
       dockerfile: .Dockerfile
     command:
       - go
@@ -10,7 +10,7 @@ services:
       - ./test
       - -timeout=0
     volumes:
-      - ./client/app_gateway:/workdir
+      - ./app_gateway:/workdir
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:
@@ -23,7 +23,7 @@ services:
   app-account:
     image: muazhari/autocode-example-app-account:latest
     build:
-      context: ./client/app_account
+      context: ./app_account
       dockerfile: .Dockerfile
     command:
       - go
@@ -31,7 +31,7 @@ services:
       - ./test
       - -timeout=0
     volumes:
-      - ./client/app_account:/workdir
+      - ./app_account:/workdir
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:
@@ -40,7 +40,7 @@ services:
   app-product:
     image: muazhari/autocode-example-app-product:latest
     build:
-      context: ./client/app_product
+      context: ./app_product
       dockerfile: .Dockerfile
     command:
       - go
@@ -48,12 +48,9 @@ services:
       - ./test
       - -timeout=0
     volumes:
-      - ./client/app_product:/workdir
+      - ./app_product:/workdir
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    deploy:
-      restart_policy:
-        condition: none
     environment:
       - PRODUCT_PORT=8000
       - GOPROXY=direct
