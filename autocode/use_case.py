@@ -26,8 +26,7 @@ from pymoo.decomposition.asf import ASF
 from pymoo.optimize import minimize
 from pymoo.visualization.pcp import PCP
 from pymoo.visualization.scatter import Scatter
-from python_on_whales import DockerClient
-from python_on_whales.components.compose.models import ComposeConfig
+from python_on_whales import DockerClient, Stack, Task
 from python_on_whales.components.container.models import NetworkInspectResult
 from ray.util.queue import Queue
 from sqlalchemy import delete
@@ -270,10 +269,10 @@ class LlmUseCase:
             return state
 
         graph = StateGraph(ScoringState)
-        graph.set_entry_point(node_scoring_analyze.__name__)
-        graph.add_node(node_scoring_analyze.__name__, node_scoring_analyze)
+        graph.set_entry_point(node_scoring.__name__)
+        # graph.add_node(node_scoring_analyze.__name__, node_scoring_analyze)
         graph.add_node(node_scoring.__name__, node_scoring)
-        graph.add_edge(node_scoring_analyze.__name__, node_scoring.__name__)
+        # graph.add_edge(node_scoring_analyze.__name__, node_scoring.__name__)
         graph.set_finish_point(node_scoring.__name__)
         compiled_graph = graph.compile()
 
@@ -324,6 +323,7 @@ class LlmUseCase:
                 {analysis}
                 """),
                 HumanMessagePromptTemplate.from_template("""
+                Generate 1 code variations using "CodeVariation" tools.
                 If you are using libraries, ensure to import them.
                 Ignore to import "autocode" library, it is already imported.
                 Ensure function name, input-output parameters, and input-output types in the code variations are exactly same as the existing code.
@@ -338,10 +338,10 @@ class LlmUseCase:
             return state
 
         graph = StateGraph(VariationState)
-        graph.set_entry_point(node_variation_analyze.__name__)
-        graph.add_node(node_variation_analyze.__name__, node_variation_analyze)
+        graph.set_entry_point(node_variation.__name__)
+        # graph.add_node(node_variation_analyze.__name__, node_variation_analyze)
         graph.add_node(node_variation.__name__, node_variation)
-        graph.add_edge(node_variation_analyze.__name__, node_variation.__name__)
+        # graph.add_edge(node_variation_analyze.__name__, node_variation.__name__)
         graph.set_finish_point(node_variation.__name__)
         compiled_graph = graph.compile()
 
@@ -511,7 +511,8 @@ class OptimizationUseCase:
             docker_client: DockerClient = dill.loads(docker_client_cache.value)
         elif len(docker_client_caches) == 0:
             docker_client: DockerClient = DockerClient(
-                compose_files=compose_files
+                compose_files=compose_files,
+                compose_project_name=uuid.uuid4().hex,
             )
             docker_client_cache: Cache = Cache(
                 key="docker_clients",
@@ -520,21 +521,26 @@ class OptimizationUseCase:
         else:
             raise ValueError(f"Number of docker client caches must be 0 or 1, but got {len(docker_client_caches)}.")
 
-        compose_config: ComposeConfig = docker_client.compose.config()
-        docker_client.compose.up(
-            scales={service: self.application_setting.num_cpus for service in compose_config.services.keys()},
-            detach=True,
-            build=True
+        docker_client.compose.build()
+        docker_stack: Stack = docker_client.stack.deploy(
+            name=docker_client.client_config.compose_project_name,
+            compose_files=docker_client.client_config.compose_files,
         )
-        for container in docker_client.compose.ps():
-            worker_id: str = re.findall(r"-(\d*)$", container.name)[0]
-            container_name: str = container.name.removesuffix(f"-{worker_id}")
+        for service in docker_stack.services():
+            service.scale(
+                new_scale=self.application_setting.num_cpus,
+            )
+
+        for container in docker_client.ps(filters={"name": rf"^{docker_client.client_config.compose_project_name}_"}):
+            task: Task = docker_client.task.inspect(x=container.config.labels["com.docker.swarm.task.id"])
+            worker_id: str = str(task.slot)
+            name: str = container.config.labels["com.docker.swarm.service.name"]
             networks: List[NetworkInspectResult] = list(container.network_settings.networks.values())
 
             is_client_found: bool = False
             for client_cache in client_caches:
                 client: OptimizationClient = dill.loads(client_cache.value)
-                if client.name == container_name and client.worker_id == worker_id:
+                if client.name == name and client.worker_id == worker_id:
                     client.host = networks[0].ip_address
                     client.port = client.port
                     client.is_ready = False
@@ -545,7 +551,7 @@ class OptimizationUseCase:
             if not is_client_found:
                 client: OptimizationClient = OptimizationClient(
                     variables={},
-                    name=container_name,
+                    name=name,
                     host=networks[0].ip_address,
                     port=0,
                     worker_id=worker_id
@@ -570,7 +576,7 @@ class OptimizationUseCase:
             docker_client_caches = list(session.exec(select(Cache).where(Cache.key == "docker_clients")).all())
             for docker_client_cache in docker_client_caches:
                 docker_client: DockerClient = dill.loads(docker_client_cache.value)
-                docker_client.compose.down()
+                docker_client.stack.remove(x=docker_client.client_config.compose_project_name)
         except sqlalchemy.exc.OperationalError:
             pass
 

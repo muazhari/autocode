@@ -1,4 +1,4 @@
-package app_product
+package main
 
 func main() {
 }

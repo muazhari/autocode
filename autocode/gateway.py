@@ -10,11 +10,11 @@ class EvaluationGateway:
         pass
 
     async def evaluate_prepare(self, client: OptimizationClient, request: OptimizationEvaluatePrepareRequest):
-        client: AsyncClient = AsyncClient(
+        async_client: AsyncClient = AsyncClient(
             base_url=f"http://{client.host}:{client.port}/apis",
             transport=AsyncHTTPTransport(retries=30)
         )
-        response = await client.post(
+        response = await async_client.post(
             url="/optimizations/evaluates/prepares",
             json=request.model_dump(mode="json"),
             timeout=None
@@ -24,11 +24,11 @@ class EvaluationGateway:
             raise ValueError(f"Error: {response.json()}")
 
     async def evaluate_run(self, client: OptimizationClient):
-        client: AsyncClient = AsyncClient(
+        async_client: AsyncClient = AsyncClient(
             base_url=f"http://{client.host}:{client.port}/apis",
             transport=AsyncHTTPTransport(retries=30)
         )
-        response = await client.get(
+        response = await async_client.get(
             url="/optimizations/evaluates/runs",
             timeout=None
         )
@@ -37,5 +37,6 @@ class EvaluationGateway:
             raise ValueError(f"Error: {response.json()}")
 
         data: OptimizationEvaluateRunResponse = OptimizationEvaluateRunResponse(**response.json())
+        data.set_client(client)
 
         return data

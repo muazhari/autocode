@@ -3,30 +3,45 @@ package test
 import (
 	"app_account/src"
 	"encoding/json"
+	"fmt"
 	"github.com/muazhari/autocode-go"
 	"github.com/stretchr/testify/assert"
+	"io"
 	"math"
 	"net/http"
-	"net/http/httptest"
+	"os"
 	"testing"
 	"time"
 )
 
-type Application struct {
-	Test      *testing.T
-	Container *src.MainContainer
-	Server    *httptest.Server
-}
+func waitServer(method string, url string, body io.Reader, timeout time.Duration) error {
+	ch := make(chan bool)
+	go func() {
+		for {
+			client := http.Client{}
+			request, _ := http.NewRequest(method, url, body)
+			_, responseErr := client.Do(request)
+			if responseErr == nil {
+				ch <- true
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}()
 
-func NewApplication(t *testing.T) *Application {
-	return &Application{
-		Test:      t,
-		Container: nil,
-		Server:    nil,
+	select {
+	case <-ch:
+		return nil
+	case <-time.After(timeout):
+		return fmt.Errorf("server did not reply after %v", timeout)
 	}
 }
 
-func (self *Application) Duplicate(ctx *autocode.Optimization) any {
+type Application struct {
+	Test      *testing.T
+	Container *src.MainContainer
+}
+
+func NewApplication(t *testing.T) *Application {
 	container := src.NewMainContainer()
 	container.Datastore.One.Accounts = []*src.Account{
 		{
@@ -40,18 +55,35 @@ func (self *Application) Duplicate(ctx *autocode.Optimization) any {
 			Password: "password2",
 		},
 	}
-	server := httptest.NewServer(container.Controller.MainRouter)
+	go func() {
+		address := fmt.Sprintf("0.0.0.0:%s", os.Getenv("ACCOUNT_PORT"))
+		err := http.ListenAndServe(address, container.Controller.MainRouter)
+		if err != nil {
+			panic(err)
+		}
+	}()
+	waitServerErr := waitServer(
+		http.MethodGet,
+		fmt.Sprintf("http://localhost:%s/health", os.Getenv("ACCOUNT_PORT")),
+		nil,
+		3*time.Second,
+	)
+	if waitServerErr != nil {
+		panic(waitServerErr)
+	}
 	return &Application{
-		Test:      self.Test,
+		Test:      t,
 		Container: container,
-		Server:    server,
 	}
 }
 
 func (self *Application) TestSearchMany(t *testing.T) {
 	t.Parallel()
 
-	url := self.Server.URL + "/accounts/searches?keyword=email1&topK=1"
+	url := fmt.Sprintf(
+		"http://localhost:%s/accounts/searches?keyword=email1&topK=1",
+		os.Getenv("ACCOUNT_PORT"),
+	)
 	response, _ := http.Get(url)
 	assert.Equal(self.Test, http.StatusOK, response.StatusCode)
 	responseBody := &src.Response[[]*src.Account]{}
@@ -63,11 +95,6 @@ func (self *Application) TestSearchMany(t *testing.T) {
 }
 
 func (self *Application) Evaluate(ctx *autocode.Optimization) *autocode.OptimizationEvaluateRunResponse {
-	t0 := time.Now()
-	self.Test.Run("TestSearchMany", self.TestSearchMany)
-	t1 := time.Now()
-	f_sum_latency := float64(0)
-	f_sum_latency += float64(t1.Sub(t0).Microseconds())
 	f_sum_output := float64(0)
 	f_sum_output += float64(ctx.GetValue("a").(int64))
 	//f_sum_output += float64(ctx.GetValue("b").(int64))
@@ -101,7 +128,7 @@ func (self *Application) Evaluate(ctx *autocode.Optimization) *autocode.Optimiza
 
 	return &autocode.OptimizationEvaluateRunResponse{
 		Objectives: []float64{
-			f_sum_latency, f_sum_output,
+			f_sum_output,
 			f_sum_understandability / variable_function_count, f_sum_complexity / variable_function_count,
 			f_sum_readability / variable_function_count, f_sum_error_potentiality / variable_function_count,
 			f_sum_overall_maintaianability / variable_function_count,

@@ -2,40 +2,64 @@ package src
 
 import (
 	"encoding/json"
+	"fmt"
 	"github.com/gorilla/mux"
 	"net/http"
-	"strconv"
-	"strings"
+	"os"
 )
 
 type OneController struct {
-	Router       *mux.Router
-	OneDatastore *OneDatastore
+	Router *mux.Router
 }
 
-func NewOneController(router *mux.Router, oneDatastore *OneDatastore) *OneController {
-	productController := &OneController{
-		Router:       router.PathPrefix("/products").Subrouter(),
-		OneDatastore: oneDatastore,
+func NewOneController(router *mux.Router) *OneController {
+	oneController := &OneController{
+		Router: router.PathPrefix("/gateways").Subrouter(),
 	}
-	productController.Router.HandleFunc("/searches", productController.SearchMany).Methods(http.MethodGet)
-	return productController
+	oneController.Router.HandleFunc("/accounts/searches", oneController.AccountSearchMany).Methods(http.MethodGet)
+	oneController.Router.HandleFunc("/products/searches", oneController.ProductSearchMany).Methods(http.MethodGet)
+	router.HandleFunc("/health", oneController.HealthCheck).Methods(http.MethodGet)
+	return oneController
 }
 
-func (self *OneController) SearchMany(writer http.ResponseWriter, request *http.Request) {
+func (self *OneController) HealthCheck(writer http.ResponseWriter, request *http.Request) {
+	writer.WriteHeader(http.StatusOK)
+}
+
+func (self *OneController) AccountSearchMany(writer http.ResponseWriter, request *http.Request) {
 	keyword := request.URL.Query().Get("keyword")
 	topK := request.URL.Query().Get("topK")
-	topKInt, _ := strconv.Atoi(topK)
-	retrievedProducts := make([]*Product, 0)
-	for _, product := range self.OneDatastore.Products {
-		if len(retrievedProducts) == topKInt {
-			break
-		}
-		if strings.Contains(keyword, product.Id) || strings.Contains(keyword, product.Name) {
-			retrievedProducts = append(retrievedProducts, product)
-		}
+	url := fmt.Sprintf(
+		"http://%s:%s/accounts/searches?keyword=%s&topK=%s",
+		os.Getenv("ACCOUNT_HOST"),
+		os.Getenv("ACCOUNT_PORT"),
+		keyword,
+		topK,
+	)
+	response, responseErr := http.Get(url)
+	if responseErr != nil {
+		writer.WriteHeader(http.StatusInternalServerError)
+		return
 	}
 	writer.Header().Set("Content-Type", "application/json")
-	responseBody := &Response[[]*Product]{Data: retrievedProducts}
-	_ = json.NewEncoder(writer).Encode(responseBody)
+	_ = json.NewEncoder(writer).Encode(response.Body)
+}
+
+func (self *OneController) ProductSearchMany(writer http.ResponseWriter, request *http.Request) {
+	keyword := request.URL.Query().Get("keyword")
+	topK := request.URL.Query().Get("topK")
+	url := fmt.Sprintf(
+		"http://%s:%s/products/searches?keyword=%s&topK=%s",
+		os.Getenv("PRODUCT_HOST"),
+		os.Getenv("PRODUCT_PORT"),
+		keyword,
+		topK,
+	)
+	response, responseErr := http.Get(url)
+	if responseErr != nil {
+		writer.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	writer.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(writer).Encode(response.Body)
 }

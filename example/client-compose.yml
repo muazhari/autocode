@@ -1,4 +1,30 @@
 services:
+  app-gateway:
+    image: muazhari/autocode-example-app-gateway:latest
+    build:
+      context: ./client/app_gateway
+      dockerfile: .Dockerfile
+    command:
+      - go
+      - test
+      - ./test
+      - -timeout=0
+    volumes:
+      - ./client/app_gateway:/workdir
+    hostname: app-gateway.{{.Task.Slot}}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    deploy:
+      restart_policy:
+        condition: none
+    environment:
+      - TEST={{.Service.ID}}-{{.Service.Name}}-{{.Service.Labels}}-{{.Node.ID}}-{{.Node.Hostname}}-{{.Task.ID}}-{{.Task.Name}}-{{.Task.Slot}}
+      - GATEWAY_PORT=8000
+      - ACCOUNT_HOST=app-account.{{.Task.Slot}}
+      - ACCOUNT_PORT=8000
+      - PRODUCT_HOST=app-product.{{.Task.Slot}}
+      - PRODUCT_PORT=8000
+      - GOPROXY=direct
   app-account:
     image: muazhari/autocode-example-app-account:latest
     build:
@@ -11,9 +37,14 @@ services:
       - -timeout=0
     volumes:
       - ./client/app_account:/workdir
+    hostname: app-account.{{.Task.Slot}}
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    deploy:
+      restart_policy:
+        condition: none
     environment:
+      - ACCOUNT_PORT=8000
       - GOPROXY=direct
   app-product:
     image: muazhari/autocode-example-app-product:latest
@@ -27,7 +58,12 @@ services:
       - -timeout=0
     volumes:
       - ./client/app_product:/workdir
+    hostname: app-product.{{.Task.Slot}}
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    deploy:
+      restart_policy:
+        condition: none
     environment:
+      - PRODUCT_PORT=8000
       - GOPROXY=direct

@@ -1,4 +1,4 @@
-package app_account
+package main
 
 func main() {
 }

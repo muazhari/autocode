@@ -14,12 +14,17 @@ type OneController struct {
 }
 
 func NewOneController(router *mux.Router, oneDatastore *OneDatastore) *OneController {
-	productController := &OneController{
+	oneController := &OneController{
 		Router:       router.PathPrefix("/products").Subrouter(),
 		OneDatastore: oneDatastore,
 	}
-	productController.Router.HandleFunc("/searches", productController.SearchMany).Methods(http.MethodGet)
-	return productController
+	oneController.Router.HandleFunc("/searches", oneController.SearchMany).Methods(http.MethodGet)
+	router.HandleFunc("/health", oneController.HealthCheck).Methods(http.MethodGet)
+	return oneController
+}
+
+func (self *OneController) HealthCheck(writer http.ResponseWriter, request *http.Request) {
+	writer.WriteHeader(http.StatusOK)
 }
 
 func (self *OneController) SearchMany(writer http.ResponseWriter, request *http.Request) {

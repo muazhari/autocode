@@ -174,6 +174,13 @@ class OptimizationEvaluateRunResponse(BaseModel):
     objectives: List[float]
     inequality_constraints: List[float]
     equality_constraints: List[float]
+    _client = PrivateAttr(default=None)
+
+    def set_client(self, client: OptimizationClient):
+        self._client = client
+
+    def get_client(self):
+        return self._client
 
 
 class OptimizationInterpretation(BaseModel):
