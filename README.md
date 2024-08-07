@@ -31,12 +31,14 @@ pip install -U autocode-py
 2. Prepare software to be processed as in the [`./example/client`](https://github.com/muazhari/autocode/tree/main/example/client) folder.
 3. Prepare deployment as in the [`./example/client/docker-compose.yml`](https://github.com/muazhari/autocode/blob/main/example/client/docker-compose.yml) file.
 4. Prepare controller as in the [`./example/controller.ipynb`](https://github.com/muazhari/autocode/blob/main/example/controller.ipynb) file.
-5. Instantiate `optimization` and execute `optimization.deploy()` in controller.
+5. Instantiate `optimization` then execute `optimization.deploy()` in controller.
 6. Open dashboard in `http://localhost:{dashboard_port}/` to see the process in real-time.
 7. Wait until all client are ready (need to wait for long time because the libraries need to be re-downloaded for each client).
 8. Execute `optimization.run()` in controller.
 9. Wait until the run is finished.
 10. Analyze and decide the best values.
+11. Execute `optimization.reset(keys=["clients"])` then `optimization.deploy()` to apply different client states.
+12. Try to execute `optimization.reset()` to totally reset the tool if needed (i.e. data inconsistency).
 
 ## Demo
 

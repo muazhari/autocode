@@ -3,12 +3,11 @@ import copy
 import re
 import uuid
 from multiprocessing import Lock
-from typing import Dict, List, Callable, Any, Coroutine, Optional
+from typing import Dict, List, Callable, Any, Coroutine, Optional, Literal
 
 import dill
 import numpy as np
 import ray
-import sqlalchemy.exc
 from langchain_core.output_parsers import PydanticToolsParser
 from langchain_core.prompts import ChatPromptTemplate, SystemMessagePromptTemplate, HumanMessagePromptTemplate
 from langchain_core.runnables import RunnableSerializable
@@ -504,6 +503,7 @@ class OptimizationUseCase:
         session.begin()
         session.exec(delete(Cache).where(Cache.key.startswith("results")))
         session.exec(delete(Cache).where(Cache.key == "objectives"))
+
         client_caches: List[Cache] = list(session.exec(select(Cache).where(Cache.key.startswith("clients"))).all())
         docker_clients: List[DockerClient] = []
 
@@ -571,19 +571,31 @@ class OptimizationUseCase:
 
         return docker_clients
 
-    def reset(self):
+    def reset(self, keys: Optional[List[Literal["docker_clients", "clients", "objectives", "results"]]] = None):
         session: Session = self.one_datastore.get_session()
         session.begin()
-        try:
-            docker_client_caches = list(session.exec(select(Cache).where(Cache.key.startswith("docker_clients"))).all())
-            for docker_client_cache in docker_client_caches:
-                docker_client: DockerClient = dill.loads(docker_client_cache.value)
-                docker_client.compose.down()
-        except sqlalchemy.exc.OperationalError:
-            pass
+        if keys is None:
+            SQLModel.metadata.drop_all(self.one_datastore.engine)
+            SQLModel.metadata.create_all(self.one_datastore.engine)
+        else:
+            if "docker_clients" in keys:
+                docker_client_caches = list(
+                    session.exec(select(Cache).where(Cache.key.startswith("docker_clients"))).all()
+                )
+                for docker_client_cache in docker_client_caches:
+                    docker_client: DockerClient = dill.loads(docker_client_cache.value)
+                    docker_client.compose.down()
+                    session.delete(docker_client_cache)
 
-        SQLModel.metadata.drop_all(self.one_datastore.engine)
-        SQLModel.metadata.create_all(self.one_datastore.engine)
+            if "clients" in keys:
+                session.exec(delete(Cache).where(Cache.key.startswith("clients")))
+
+            if "objectives" in keys:
+                session.exec(delete(Cache).where(Cache.key == "objectives"))
+
+            if "results" in keys:
+                session.exec(delete(Cache).where(Cache.key.startswith("results")))
+
         session.commit()
         session.close()
 

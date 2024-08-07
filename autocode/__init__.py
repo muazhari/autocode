@@ -2,7 +2,7 @@ import os
 import sys
 from http import HTTPStatus
 from multiprocessing import Process
-from typing import Callable, Any, Dict, List
+from typing import Callable, Any, Dict, List, Literal, Optional
 
 import ray
 import uvicorn
@@ -110,14 +110,16 @@ class Optimization:
         self.server.terminate()
         ray.shutdown()
 
-    def reset(self):
+    def reset(self, keys: Optional[List[Literal["docker_clients", "clients", "objectives", "results"]]] = None):
         optimization_use_case: OptimizationUseCase = self.application_container.use_cases.optimization()
-        optimization_use_case.reset()
+        optimization_use_case.reset(
+            keys=keys
+        )
 
     def deploy(self, compose_files: List[str]) -> List[DockerClient]:
         optimization_use_case: OptimizationUseCase = self.application_container.use_cases.optimization()
         return optimization_use_case.deploy(
-            compose_files=compose_files
+            compose_files=compose_files,
         )
 
     def run(

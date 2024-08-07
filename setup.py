@@ -7,7 +7,7 @@ long_description: str = (this_directory / "README.md").read_text()
 
 setup(
     name='autocode-py',
-    version='0.0.1.post8',
+    version='0.0.1.post9',
     author='muazhari',
     url='https://github.com/muazhari/autocode',
     description='autocode: Auto Code Improvement by Metrics Optimization.',
