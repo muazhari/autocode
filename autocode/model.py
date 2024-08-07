@@ -22,42 +22,35 @@ class BaseModel(PydanticBaseModelV2):
 
 class CodeScoring(BaseModelV1):
     """
-    Score code in based on the following statements:
-    Error Potentiality - this code is potentially error-prone;
-    Readability - this code is easy to read;
-    Understandability - the semantic meaning of this code is clear;
-    Complexity - this code is complex;
-    Modularity  - this code should be broken into smaller pieces;
-    Overall maintainability - overall, this code is maintainable.
-    The score scale from 1 (strongly agree) to 100 (strongly disagree).
-    You must score in precision, i.e. 14.3, 47.456, 75.45, 58.58495, 3.141598, etc.
+    Score the code.
     """
-    error_potentiality: float = FieldV1(description="Error potential score.")
+    analysis: List[str] = FieldV1(description="Step-by-step analysis before scoring the code.")
     readability: float = FieldV1(description="Readability score.")
     understandability: float = FieldV1(description="Understandability score.")
     complexity: float = FieldV1(description="Complexity score.")
     modularity: float = FieldV1(description="Modularity score.")
+    error_potentiality: float = FieldV1(description="Error potential score.")
     overall_maintainability: float = FieldV1(description="Overall maintainability score.")
 
 
 class CodeVariation(BaseModelV1):
     """
-    Code variation is a code snippet that is a variation of the original code.
+    Propose code variation.
     """
-    variation: Optional[str] = FieldV1(description="Code variation.", default=None)
+    analysis: List[str] = FieldV1(description="Step-by-step analysis before proposing the code variation.")
+    variation: str = FieldV1(description="Proposed code variation.")
 
 
 class ScoringState(TypedDict):
-    code: str
-    analysis: str
-    score: List[CodeScoring]
+    programming_language: str
+    existing_code: str
+    score: CodeScoring
 
 
 class VariationState(TypedDict):
-    code: str
-    analysis: str
-    variation: List[CodeVariation]
-    new_function_name: str
+    programming_language: str
+    existing_code: str
+    variations: List[CodeVariation]
 
 
 class OptimizationVariable(BaseModel):
@@ -141,6 +134,7 @@ class OptimizationClient(BaseModel):
 
 
 class OptimizationPrepareRequest(BaseModel):
+    language: str
     variables: Dict[str, OptimizationBinary | OptimizationChoice | OptimizationInteger | OptimizationReal]
     host: Optional[str] = Field(default=None)
     port: int

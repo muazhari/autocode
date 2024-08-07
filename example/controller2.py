@@ -1,8 +1,5 @@
-import dotenv
-
 from autocode import OptimizationUseCase, ApplicationContainer, ApplicationSetting
 
-dotenv.load_dotenv(dotenv.find_dotenv())
 application_container: ApplicationContainer = ApplicationContainer()
 application_setting: ApplicationSetting = application_container.settings.application()
 application_setting.num_cpus = 2
@@ -20,6 +17,7 @@ objectives: List[OptimizationObjective] = [
     OptimizationObjective(
         type="minimize",
     ),
+
     OptimizationObjective(
         type="maximize",
     ),
@@ -39,9 +37,6 @@ objectives: List[OptimizationObjective] = [
         type="maximize",
     ),
 
-    OptimizationObjective(
-        type="minimize",
-    ),
     OptimizationObjective(
         type="maximize",
     ),
@@ -64,8 +59,19 @@ objectives: List[OptimizationObjective] = [
 
 
 def evaluator(inputs: List[OptimizationEvaluateRunResponse]) -> Dict[str, Any]:
+    f_gateway: List[float] = []
+    f_account: List[float] = []
+    f_product: List[float] = []
+    for input in inputs:
+        if "gateway" in input.get_client().name:
+            f_gateway = input.objectives
+        elif "account" in input.get_client().name:
+            f_account = input.objectives
+        elif "product" in input.get_client().name:
+            f_product = input.objectives
+
     output: Dict[str, Any] = {
-        "F": inputs[0].objectives + inputs[1].objectives,
+        "F": f_gateway + f_account + f_product
     }
 
     return output

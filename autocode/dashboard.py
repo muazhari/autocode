@@ -55,16 +55,19 @@ while True:
         client: OptimizationClient = dill.loads(client_cache.value)
         variables.update(client.variables)
         clients[client.id] = client
-        client_df_list.append(client.model_dump(mode="json"))
+        client_json: Dict[str, Any] = client.model_dump(mode="json")
+        client_json["port"] = str(client.port)
+        client_df_list.append(client_json)
 
-    with client_df_placeholder:
-        client_df: pd.DataFrame = pd.DataFrame(client_df_list)
-        client_df = client_df.astype(dtype=str)
+    client_df: pd.DataFrame = pd.DataFrame(client_df_list)
+
+    with client_df_placeholder.container():
         st.dataframe(client_df, height=500)
 
     if len(objective_caches) > 0:
         break
 
+    session.close()
     time.sleep(0.01)
 
 if len(objective_caches) == 0 and len(client_caches) == 0:
@@ -91,12 +94,7 @@ elif len(objective_caches) == 1 and len(client_caches) >= 1:
 else:
     st.error("Preparation data cache is not valid.")
 
-plot_0_placeholder = st.empty()
-plot_1_placeholder = st.empty()
-st.subheader("Objective Space")
-plot_f_df_placeholder = st.empty()
-st.subheader("Solution Space")
-plot_x_df_placeholder = st.empty()
+plot_placeholder = st.empty()
 
 while True:
     try:
@@ -137,12 +135,6 @@ while True:
             decision_index=decision_index
         )
 
-        with plot_0_placeholder:
-            st.pyplot(plots[0].fig)
-
-        with plot_1_placeholder:
-            st.pyplot(plots[1].fig)
-
         list_dict_x: List[List[Dict[str, Any]]] = []
         list_dict_f: List[Dict[str, Any]] = []
         for index, (x, f) in enumerate(zip(result.X, result.F)):
@@ -178,13 +170,17 @@ while True:
                 dict_f[f"f{index + 1}"] = f_value
             list_dict_f.append(dict_f)
 
-        with plot_f_df_placeholder:
-            f_df: pd.DataFrame = pd.DataFrame(list_dict_f)
-            st.dataframe(f_df, height=500)
+        f_df: pd.DataFrame = pd.DataFrame(list_dict_f)
 
-        with plot_x_df_placeholder:
+        with plot_placeholder.container():
+            st.subheader("Objective Space")
+            st.pyplot(plots[0].fig)
+            st.pyplot(plots[1].fig)
+            st.subheader("Solution Space")
+            st.dataframe(f_df, height=500)
             st.json(list_dict_x, expanded=False)
 
         st.session_state["old_result_caches"].add(cache)
 
+    session.close()
     time.sleep(0.01)

@@ -25,7 +25,7 @@ companies.
 1. Install the requirements
 
 ```bash
-pip install autocode-py
+pip install -U autocode-py
 ```
 
 2. Prepare software to be processed as in the [`./example/client`](https://github.com/muazhari/autocode/tree/main/example/client) folder.
@@ -33,7 +33,7 @@ pip install autocode-py
 4. Prepare controller as in the [`./example/controller.ipynb`](https://github.com/muazhari/autocode/blob/main/example/controller.ipynb) file.
 5. Instantiate `optimization` and execute `optimization.deploy()` in controller.
 6. Open dashboard in `http://localhost:{dashboard_port}/` to see the process in real-time.
-7. Wait until all client are ready (need to wait for long time because the libraries need to be re-download for each client & refresh the dashboard manually because of bug).
+7. Wait until all client are ready (need to wait for long time because the libraries need to be re-downloaded for each client).
 8. Execute `optimization.run()` in controller.
 9. Wait until the run is finished.
 10. Analyze and decide the best values.

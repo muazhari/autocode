@@ -12,4 +12,4 @@ class ApplicationSetting(BaseSettings):
     server_host: str = Field(default="0.0.0.0")
     server_port: int = Field(default=10000)
     dashboard_port: int = Field(default=10001)
-    openai_api_key: str = Field(default="")
+    OPENAI_API_KEY: str = Field(default="")

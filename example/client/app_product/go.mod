@@ -4,7 +4,7 @@ go 1.22.5
 
 require (
 	github.com/gorilla/mux v1.8.1
-	github.com/muazhari/autocode-go v0.0.0-20240806052715-4093b1b479f4
+	github.com/muazhari/autocode-go v0.0.0-20240807125218-6ca4153954b7
 	github.com/stretchr/testify v1.9.0
 )
 

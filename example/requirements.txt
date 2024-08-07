@@ -12,5 +12,5 @@ numpy<2
 python-on-whales
 uvicorn
 langchain
-langchain-openai
+langchain-openai>=0.1.21rc1
 langgraph
