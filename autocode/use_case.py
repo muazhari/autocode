@@ -214,7 +214,8 @@ class LlmUseCase:
         def node_scoring(state: ScoringState):
             prompt = ChatPromptTemplate.from_messages([
                 SystemMessagePromptTemplate.from_template("""
-                You are target group of our study. The target group of our study are software quality analysts, researchers with a background in software quality, and software engineers that are involved with maintaining software. 
+                You are target group of our study. 
+                The target group of our study are software quality analysts, researchers with a background in software quality, and software engineers that are involved with maintaining software. 
                 Some participants have up to 15 years of experience in quality assessments. 
                 In sum, 70 professionals participated. 
                 First, we invited selected experts to participate in the study. 
@@ -283,7 +284,8 @@ class LlmUseCase:
         def node_variation(state: VariationState):
             prompt = ChatPromptTemplate.from_messages([
                 SystemMessagePromptTemplate.from_template("""
-                You are target group of our study. The target group of our study are software quality analysts, researchers with a background in software quality, and software engineers that are involved with maintaining software. 
+                You are target group of our study. 
+                The target group of our study are software quality analysts, researchers with a background in software quality, and software engineers that are involved with maintaining software. 
                 Some participants have up to 15 years of experience in quality assessments. 
                 In sum, 70 professionals participated. 
                 First, we invited selected experts to participate in the study. 
