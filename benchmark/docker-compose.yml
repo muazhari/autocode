@@ -1,0 +1,21 @@
+services:
+  benchmark:
+    image: muazhari/autocode-benchmark:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    network_mode: host
+    entrypoint:
+      - /bin/sh
+      - -c
+    command:
+      - |-
+        service ssh start \
+        && \
+        sleep infinity
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              capabilities: [ "gpu" ]
