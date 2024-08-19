@@ -6,7 +6,7 @@ Auto Code Improvement by Metrics Optimization.
 
 ## Description
 
-Autocode selects the best values for optimized metrics. The value types could be bool, int, float, and choice (including
+Autocode selects the best values for optimized metrics. The variable value types could be bool, int, float, and choice (including
 but not limited to code). This project utilizes a Large Language Model and Mixed-Variable Many-Objective Optimization.
 Based on our research/literature review, this project hypothetically can contribute to the economic performance of
 companies.
@@ -14,7 +14,8 @@ companies.
 ## Features
 
 - Many-software Value-level Mixed-variable Many-objective Optimization.
-- Value types include bool, int, float, and choice (code).
+- Variable types are bool, int, float, and choice (including but not limited to code).
+- Error (MAE/MAE_max) for MCDM (single solution suggestion) is up to 0.0000175.
 - Code scoring and variation generators using LLM.
 - Software cross-language support.
 - Easy software deployment using docker-compose.
@@ -49,7 +50,7 @@ pip install -U autocode-py
 
 ## Compatibility
 
-- Python 3.10, 3.11
+- Python 3.10, 3.11, 3.12
 - Linux
 - Docker
 - [autocode-go](https://github.com/muazhari/autocode-go)
