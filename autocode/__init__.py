@@ -10,7 +10,6 @@ from fastapi import FastAPI
 from httpx import Client
 from pymoo.core.result import Result
 from python_on_whales import DockerClient
-from sqlmodel import SQLModel
 from starlette.middleware.cors import CORSMiddleware
 
 from autocode.container import ApplicationContainer
@@ -23,7 +22,6 @@ from autocode.use_case import OptimizationUseCase
 class Optimization:
     def __init__(
             self,
-            num_cpus: int,
             server_host: str,
             server_port: int,
             dashboard_port: int,
@@ -34,18 +32,14 @@ class Optimization:
 
         ray.init(
             dashboard_host=server_host,
-            num_cpus=num_cpus
         )
         print("Available resources: ", ray.available_resources())
 
         self.application_container: ApplicationContainer = ApplicationContainer()
         application_setting: ApplicationSetting = self.application_container.settings.application()
-        application_setting.num_cpus = num_cpus
         application_setting.server_host = server_host
         application_setting.server_port = server_port
         application_setting.dashboard_port = dashboard_port
-        one_datastore: OneDatastore = self.application_container.datastores.one()
-        SQLModel.metadata.create_all(one_datastore.engine)
 
         self.app: FastAPI = FastAPI()
         self.app.add_middleware(
@@ -100,26 +94,28 @@ class Optimization:
     def run_server(self):
         sys.stdout = open("server.log", "w")
         sys.stderr = open("server.log", "w")
+        settings: ApplicationSetting = self.application_container.settings.application()
         uvicorn.run(
             app=self.app,
-            host=self.application_container.settings.application().server_host,
-            port=self.application_container.settings.application().server_port
+            host=settings.server_host,
+            port=settings.server_port
         )
 
     def stop(self):
         self.server.terminate()
         ray.shutdown()
 
-    def reset(self, keys: Optional[List[Literal["docker_clients", "clients", "objectives", "results"]]] = None):
+    def reset(self, keys: Optional[List[Literal["docker_clients", "clients", "objectives", "results", "llms"]]] = None):
         optimization_use_case: OptimizationUseCase = self.application_container.use_cases.optimization()
         optimization_use_case.reset(
             keys=keys
         )
 
-    def deploy(self, compose_files: List[str]) -> List[DockerClient]:
+    def deploy(self, compose_files: List[str], num_workers: int) -> List[DockerClient]:
         optimization_use_case: OptimizationUseCase = self.application_container.use_cases.optimization()
         return optimization_use_case.deploy(
             compose_files=compose_files,
+            num_workers=num_workers
         )
 
     def run(
@@ -127,7 +123,8 @@ class Optimization:
             objectives: List[OptimizationObjective],
             num_inequality_constraints: int,
             num_equality_constraints: int,
-            evaluator: Callable[[List[OptimizationEvaluateRunResponse]], Dict[str, Any]]
+            evaluator: Callable[[List[OptimizationEvaluateRunResponse]], Dict[str, Any]],
+            job_resources: Dict[str, Any],
     ) -> Result:
         optimization_use_case: OptimizationUseCase = self.application_container.use_cases.optimization()
         return optimization_use_case.run(
@@ -135,6 +132,7 @@ class Optimization:
             num_inequality_constraints=num_inequality_constraints,
             num_equality_constraints=num_equality_constraints,
             evaluator=evaluator,
+            job_resources=job_resources
         )
 
     def interpret(

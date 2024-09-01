@@ -25,7 +25,7 @@ setup(
         'Topic :: Scientific/Engineering',
     ],
     install_requires=[
-        'pymoo',
+        'pymoo@git+https://github.com/anyoptimization/pymoo.git',
         'pydantic_settings',
         'fastapi',
         'dependency-injector>=4.42.0b1',

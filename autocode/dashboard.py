@@ -119,9 +119,6 @@ while True:
 
         result: Result = dill.loads(cache.value)
 
-        if result.F.ndim == 1:
-            result.F = np.array([result.F])
-
         decision_index: int = optimization_use_case.get_decision_index(
             result=result,
             weights=weights
@@ -130,7 +127,7 @@ while True:
             if objective.type == "maximize":
                 result.F[:, index] = -result.F[:, index]
 
-        plots: List[Plot] = optimization_use_case.plot(
+        plots: Dict[str, Plot] = optimization_use_case.plot(
             result=result,
             decision_index=decision_index
         )
@@ -155,27 +152,29 @@ while True:
                     variable_value = value.data
 
                 transformed_x: Dict[str, Any] = {
-                    "variable_name": variables[variable_id].name,
+                    "variable_id": variables[variable_id].id,
                     "variable_type": variable.type,
                     "variable_value": variable_value,
                     "variable_value_type": value.type,
                     "client_name": client.name,
                 }
                 list_transformed_x.append(transformed_x)
+
             list_dict_x.append(list_transformed_x)
 
             dict_f: Dict[str, Any] = {}
             dict_f["decision"] = index == decision_index
             for index, f_value in enumerate(f):
                 dict_f[f"f{index + 1}"] = f_value
+
             list_dict_f.append(dict_f)
 
         f_df: pd.DataFrame = pd.DataFrame(list_dict_f)
 
         with plot_placeholder.container():
             st.subheader("Objective Space")
-            st.pyplot(plots[0].fig)
-            st.pyplot(plots[1].fig)
+            st.pyplot(plots["scatter"].fig)
+            st.pyplot(plots["pcp"].fig)
             st.subheader("Solution Space")
             st.dataframe(f_df, height=500)
             st.json(list_dict_x, expanded=False)

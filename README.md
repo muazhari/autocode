@@ -16,7 +16,7 @@ companies.
 - Many-software Value-level Mixed-variable Many-objective Optimization.
 - Variable types are bool, int, float, and choice (including but not limited to code).
 - Error (MAE/MAE_max) for MCDM (single solution suggestion) is up to 0.0000175.
-- Code scoring and variation generators using LLM.
+- Code scoring using LLM.
 - Software cross-language support.
 - Easy software deployment using docker-compose.
 - Scalable to infinite cores to speed up processing in parallel.

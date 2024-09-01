@@ -247,7 +247,6 @@ func Test(t *testing.T) {
 		"host.docker.internal",
 		10000,
 		11000,
-		[]string{},
 	)
 	optimization.Prepare()
 }

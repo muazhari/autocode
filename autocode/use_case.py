@@ -1,25 +1,25 @@
 import asyncio
-import copy
-import re
 import uuid
+from concurrent.futures import thread
 from multiprocessing import Lock
 from typing import Dict, List, Callable, Any, Coroutine, Optional, Literal
 
 import dill
 import numpy as np
-import ray
+from langchain.globals import get_llm_cache
+from langchain_community.cache import SQLiteCache
 from langchain_core.output_parsers import PydanticToolsParser
 from langchain_core.prompts import ChatPromptTemplate, SystemMessagePromptTemplate, HumanMessagePromptTemplate
 from langchain_core.runnables import RunnableSerializable
 from langchain_core.runnables.utils import Output
 from langchain_openai import ChatOpenAI
 from langgraph.graph import StateGraph
-from pymoo.algorithms.moo.sms import SMSEMOA
+from pymoo.algorithms.moo.age2 import AGEMOEA2
 from pymoo.core.algorithm import Algorithm
 from pymoo.core.callback import Callback
 from pymoo.core.mixed import MixedVariableSampling, MixedVariableMating, MixedVariableDuplicateElimination
 from pymoo.core.plot import Plot
-from pymoo.core.problem import ElementwiseProblem
+from pymoo.core.problem import ElementwiseProblem, RayParallelization
 from pymoo.core.result import Result
 from pymoo.core.variable import Variable, Binary, Choice, Integer, Real
 from pymoo.decomposition.asf import ASF
@@ -30,15 +30,15 @@ from python_on_whales import DockerClient
 from python_on_whales.components.container.models import NetworkInspectResult
 from ray.util.queue import Queue
 from sqlalchemy import delete
-from sqlmodel import Session, SQLModel, select
+from sqlmodel import Session, select
 
 from autocode.datastore import OneDatastore
 from autocode.gateway import EvaluationGateway
 from autocode.model import OptimizationPrepareRequest, OptimizationChoice, OptimizationBinary, \
-    OptimizationInteger, OptimizationReal, OptimizationVariable, OptimizationClient, \
+    OptimizationInteger, OptimizationReal, OptimizationClient, \
     OptimizationValue, OptimizationEvaluatePrepareRequest, OptimizationEvaluateRunResponse, OptimizationObjective, \
     OptimizationPrepareResponse, Cache, OptimizationValueFunction, CodeScoring, \
-    ScoringState, CodeVariation, VariationState
+    ScoringState
 from autocode.setting import ApplicationSetting
 
 
@@ -88,22 +88,11 @@ class OptimizationProblem(ElementwiseProblem):
 
         self.client_to_worker_id_and_name: Dict[str, Dict[str, OptimizationClient]] = {}
         self.queue = Queue()
-        worker_id_to_count: Dict[str, int] = {}
         for client in self.clients.values():
-            worker_id_to_count[client.worker_id] = worker_id_to_count.get(client.worker_id, 0) + 1
             if self.client_to_worker_id_and_name.get(client.worker_id, None) is None:
+                self.queue.put(client.worker_id)
                 self.client_to_worker_id_and_name[client.worker_id] = {}
             self.client_to_worker_id_and_name[client.worker_id][client.name] = client
-
-        worker_id_sum: int = 0
-        for worker_id in worker_id_to_count.keys():
-            worker_id_sum += 1
-            self.queue.put(worker_id)
-
-        if worker_id_sum != self.application_setting.num_cpus:
-            raise ValueError(
-                f"Number of worker_id_sum {worker_id_sum} does not match {self.application_setting.num_cpus}."
-            )
 
         self.vars: Dict[str, Variable] = {}
         for variable_id, variable in variables.items():
@@ -199,11 +188,12 @@ class LlmUseCase:
     ):
         self.application_setting = application_setting
         self.scoring_graph = self.get_scoring_graph()
-        self.variation_graph = self.get_variation_graph()
 
     def get_scoring_graph(self):
         chat: ChatOpenAI = ChatOpenAI(
             model="gpt-4o-mini",
+            max_tokens=4000,
+            temperature=0,
             api_key=self.application_setting.OPENAI_API_KEY
         )
 
@@ -238,12 +228,12 @@ class LlmUseCase:
                 You must score the code in precision, example: 14.3, 42.456, 99.45, 78.58495, 3.141598, 0.579, etc.
                 You must in context to the programming language.
                 Ignore the function name, input-output parameters, and input-output types.
-                <programming_language>
+                <ProgrammingLanguage>
                 {programming_language}
-                </programming_language>
-                <existing_code>
+                </ProgrammingLanguage>
+                <ExistingCode>
                 {existing_code}
-                </existing_code>
+                </ExistingCode>
                 """),
             ])
             chain: RunnableSerializable = (
@@ -271,71 +261,6 @@ class LlmUseCase:
 
         return compiled_graph
 
-    def get_variation_graph(self):
-        chat: ChatOpenAI = ChatOpenAI(
-            model="gpt-4o-mini",
-            api_key=self.application_setting.OPENAI_API_KEY
-        )
-
-        parser: PydanticToolsParser = PydanticToolsParser(
-            tools=[CodeVariation]
-        )
-
-        def node_variation(state: VariationState):
-            prompt = ChatPromptTemplate.from_messages([
-                SystemMessagePromptTemplate.from_template("""
-                You are target group of our study. 
-                The target group of our study are software quality analysts, researchers with a background in software quality, and software engineers that are involved with maintaining software. 
-                Some participants have up to 15 years of experience in quality assessments. 
-                In sum, 70 professionals participated. 
-                First, we invited selected experts to participate in the study. 
-                Second, we asked them to disseminate the study to interested and qualified colleagues. 
-                The survey was also promoted in relevant networks. 
-                The participants are affiliated with companies including Airbus, Audi, BMW, Boston Consulting Group, Celonis, cesdo Software Quality GmbH, CQSE GmbH, Facebook, fortiss, itestra GmbH, Kinexon GmbH, MaibornWolff GmbH, Munich Re, Oracle, and three universities. 
-                However, 7 participants did not want to share their affiliation. 
-                During the study, we followed a systematic approach to assess software maintainability. 
-                The following steps were taken:
-                """),
-                HumanMessagePromptTemplate.from_template("""
-                Comprehensively step-by-step analyze the existing code then propose necessary code variations using "CodeVariation" tools.
-                You must in context to the programming language.
-                You can use other libraries in the code variations.
-                If you are using other libraries, ensure to import them.
-                Do not try to use "autocode" library in the code variations.
-                Do not try to add, remove, and change the function name, input-output parameters, and input-output types in the code variations, make them exactly as in the existing code.
-                <programming_language>
-                {programming_language}
-                </programming_language>
-                <existing_code>
-                {existing_code}
-                </existing_code>
-                """),
-            ])
-            chain: RunnableSerializable = (
-                    prompt |
-                    chat.bind_tools(
-                        tools=parser.tools,
-                        strict=True,
-                        tool_choice="auto"
-                    ) |
-                    parser
-            )
-            response: Output = chain.invoke({
-                "programming_language": state["programming_language"],
-                "existing_code": state["existing_code"],
-            })
-            state["variations"] = response
-
-            return state
-
-        graph = StateGraph(VariationState)
-        graph.set_entry_point(node_variation.__name__)
-        graph.add_node(node_variation.__name__, node_variation)
-        graph.set_finish_point(node_variation.__name__)
-        compiled_graph = graph.compile()
-
-        return compiled_graph
-
     async def function_scoring(self, language: str, function: OptimizationValueFunction) -> CodeScoring:
         state: ScoringState = await self.scoring_graph.ainvoke({
             "programming_language": language,
@@ -343,29 +268,6 @@ class LlmUseCase:
         })
 
         return state["score"]
-
-    async def generate_function_variation(self, language: str, function: OptimizationValueFunction) -> List[
-        CodeVariation]:
-        state: VariationState = await self.variation_graph.ainvoke({
-            "programming_language": language,
-            "existing_code": function.string,
-        })
-
-        return state["variations"]
-
-
-class OptimizationProblemRunner:
-    def __init__(self):
-        pass
-
-    def __call__(self, f, X):
-        runnable = ray.remote(f.__call__.__func__)
-        futures = [runnable.remote(f, x) for x in X]
-        return ray.get(futures)
-
-    def __getstate__(self):
-        state = self.__dict__.copy()
-        return state
 
 
 class OptimizationUseCase:
@@ -381,9 +283,6 @@ class OptimizationUseCase:
         self.one_datastore = one_datastore
         self.application_setting = application_setting
         self.client_locks: Dict[str, Lock] = {}
-        self.client_name_to_variables: Dict[
-            str, Dict[str, OptimizationBinary | OptimizationChoice | OptimizationInteger | OptimizationReal]
-        ] = {}
 
     def prepare(self, request: OptimizationPrepareRequest) -> OptimizationPrepareResponse:
         session: Session = self.one_datastore.get_session()
@@ -397,19 +296,6 @@ class OptimizationUseCase:
         for client_cache in client_caches:
             current_client: OptimizationClient = dill.loads(client_cache.value)
             if current_client.host == request.host:
-                client = current_client
-                break
-
-        if self.client_locks.get(client.name, None) is None:
-            self.client_locks[client.name] = Lock()
-        self.client_locks[client.name].acquire()
-
-        client_caches: List[Cache] = list(
-            session.exec(select(Cache).where(Cache.key.startswith("clients"))).all()
-        )
-        for client_cache in client_caches:
-            current_client: OptimizationClient = dill.loads(client_cache.value)
-            if current_client.host == request.host:
                 client_cache = client_cache
                 client = current_client
                 client.variables = request.variables
@@ -417,72 +303,35 @@ class OptimizationUseCase:
                 client.is_ready = True
                 break
 
-        if self.client_name_to_variables.get(client.name, None) is not None:
-            client.variables = self.client_name_to_variables[client.name]
-        else:
-            list_code_variation_futures: List[Coroutine] = []
-            list_variables: List[OptimizationVariable] = []
-            list_functions: List[OptimizationValueFunction] = []
+        if client is None:
+            raise ValueError(f"Client with host {request.host} is not found.")
 
-            for variable_id, variable in client.variables.items():
-                if variable.type == OptimizationChoice.__name__:
-                    for option_id, option in variable.options.items():
-                        if option.type == OptimizationValueFunction.__name__:
-                            function: OptimizationValueFunction = option.data
-                            future_code_variation: Coroutine = self.llm_use_case.generate_function_variation(
-                                language=request.language,
-                                function=function
-                            )
-                            list_code_variation_futures.append(future_code_variation)
-                            list_variables.append(variable)
-                            list_functions.append(function)
+        if self.client_locks.get(client.name, None) is None:
+            self.client_locks[client.name] = Lock()
+        self.client_locks[client.name].acquire()
 
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-
-            list_code_variations = asyncio.get_event_loop().run_until_complete(
-                asyncio.gather(*list_code_variation_futures)
+        async def execution(function: OptimizationValueFunction):
+            score: CodeScoring = await self.llm_use_case.function_scoring(
+                language=request.language,
+                function=function
             )
-            for variable, code_variations, function in zip(list_variables, list_code_variations, list_functions):
-                for code_variation in code_variations:
-                    new_option_id: str = str(uuid.uuid4())
-                    copied_function: OptimizationValueFunction = copy.deepcopy(function)
-                    new_function_name: str = "variation_" + uuid.uuid4().hex
-                    split_function_name = copied_function.name.split(".")
-                    split_function_name[-1] = new_function_name
-                    copied_function.name = ".".join(split_function_name)
-                    copied_function.string = re.sub(
-                        pattern=r"func (.+?)\(",
-                        repl="func " + new_function_name + "(",
-                        string=code_variation.variation
-                    )
-                    variable.options[new_option_id] = OptimizationValue(
-                        id=new_option_id,
-                        data=copied_function
-                    )
+            function.understandability = score.understandability
+            function.readability = score.readability
+            function.complexity = score.complexity
+            function.modularity = score.modularity
+            function.error_potentiality = score.error_potentiality
+            function.overall_maintainability = score.overall_maintainability
 
-            list_functions: List[OptimizationValueFunction] = []
-            list_scoring_futures: List[Coroutine] = []
-            for variable_id, variable in client.variables.items():
-                if variable.type == OptimizationChoice.__name__:
-                    for option_id, option in variable.options.items():
-                        if option.type == OptimizationValueFunction.__name__:
-                            function: OptimizationValueFunction = option.data
-                            future_scoring: Coroutine = self.llm_use_case.function_scoring(
-                                language=request.language,
-                                function=function
-                            )
-                            list_scoring_futures.append(future_scoring)
-                            list_functions.append(function)
+        list_scoring_futures: List[Coroutine] = []
+        for variable_id, variable in client.variables.items():
+            if variable.type == OptimizationChoice.__name__:
+                for option_id, option in variable.options.items():
+                    if option.type == OptimizationValueFunction.__name__:
+                        function: OptimizationValueFunction = option.data
+                        list_scoring_futures.append(execution(function))
 
-            list_scores = asyncio.get_event_loop().run_until_complete(asyncio.gather(*list_scoring_futures))
-            for function, score in zip(list_functions, list_scores):
-                function.understandability = score.understandability
-                function.readability = score.readability
-                function.complexity = score.complexity
-                function.modularity = score.modularity
-                function.error_potentiality = score.error_potentiality
-                function.overall_maintainability = score.overall_maintainability
+        asyncio.set_event_loop(asyncio.new_event_loop())
+        asyncio.get_event_loop().run_until_complete(asyncio.gather(*list_scoring_futures))
 
         for variable in client.variables.values():
             variable.set_client_id(client.id)
@@ -491,7 +340,6 @@ class OptimizationUseCase:
         session.add(client_cache)
         session.commit()
         session.close()
-        self.client_name_to_variables[client.name] = client.variables
         self.client_locks[client.name].release()
 
         response: OptimizationPrepareResponse = OptimizationPrepareResponse(
@@ -500,17 +348,14 @@ class OptimizationUseCase:
 
         return response
 
-    def deploy(self, compose_files: List[str]) -> List[DockerClient]:
-        session: Session = self.one_datastore.get_session()
-        session.begin()
-        session.exec(delete(Cache).where(Cache.key.startswith("results")))
-        session.exec(delete(Cache).where(Cache.key == "objectives"))
+    def deploy(self, compose_files: List[str], num_workers: int) -> List[DockerClient]:
+        self.reset(keys=["results", "objectives"])
 
-        client_caches: List[Cache] = list(session.exec(select(Cache).where(Cache.key.startswith("clients"))).all())
         docker_clients: List[DockerClient] = []
 
-        for i in range(self.application_setting.num_cpus):
-            worker_id: str = f"autocode-worker-{i}"
+        def execution(worker_id: str):
+            session: Session = self.one_datastore.get_session()
+            session.begin()
             docker_client_caches: List[Cache] = list(
                 session.exec(select(Cache).where(Cache.key == f"docker_clients_{worker_id}")).all()
             )
@@ -540,6 +385,9 @@ class OptimizationUseCase:
                 networks: List[NetworkInspectResult] = list(container.network_settings.networks.values())
 
                 is_client_found: bool = False
+                client_caches: List[Cache] = list(
+                    session.exec(select(Cache).where(Cache.key.startswith("clients"))).all()
+                )
                 for client_cache in client_caches:
                     client: OptimizationClient = dill.loads(client_cache.value)
                     if client.name == name and client.worker_id == worker_id:
@@ -567,36 +415,49 @@ class OptimizationUseCase:
             docker_clients.append(docker_client)
             docker_client_cache.value = dill.dumps(docker_client)
             session.add(docker_client_cache)
+            session.commit()
+            session.close()
 
-        session.commit()
-        session.close()
+        with thread.ThreadPoolExecutor() as executor:
+            for i in range(num_workers):
+                worker_id: str = f"autocode-worker-{i}"
+                executor.submit(execution, worker_id)
 
         return docker_clients
 
-    def reset(self, keys: Optional[List[Literal["docker_clients", "clients", "objectives", "results"]]] = None):
+    def reset(self, keys: Optional[List[Literal["docker_clients", "clients", "objectives", "results", "llms"]]] = None):
         session: Session = self.one_datastore.get_session()
         session.begin()
         if keys is None:
-            SQLModel.metadata.drop_all(self.one_datastore.engine)
-            SQLModel.metadata.create_all(self.one_datastore.engine)
-        else:
-            if "docker_clients" in keys:
-                docker_client_caches = list(
-                    session.exec(select(Cache).where(Cache.key.startswith("docker_clients"))).all()
-                )
+            keys = ["docker_clients", "clients", "objectives", "results", "llms"]
+
+        if "docker_clients" in keys:
+            docker_client_caches = list(
+                session.exec(select(Cache).where(Cache.key.startswith("docker_clients"))).all()
+            )
+
+            def execution(docker_client_cache: Cache):
+                docker_client: DockerClient = dill.loads(docker_client_cache.value)
+                docker_client.compose.down()
+                session.delete(docker_client_cache)
+
+            with thread.ThreadPoolExecutor() as executor:
                 for docker_client_cache in docker_client_caches:
-                    docker_client: DockerClient = dill.loads(docker_client_cache.value)
-                    docker_client.compose.down()
-                    session.delete(docker_client_cache)
+                    executor.submit(execution, docker_client_cache)
 
-            if "clients" in keys:
-                session.exec(delete(Cache).where(Cache.key.startswith("clients")))
+        if "clients" in keys:
+            self.client_locks = {}
+            session.exec(delete(Cache).where(Cache.key.startswith("clients")))
 
-            if "objectives" in keys:
-                session.exec(delete(Cache).where(Cache.key == "objectives"))
+        if "objectives" in keys:
+            session.exec(delete(Cache).where(Cache.key == "objectives"))
 
-            if "results" in keys:
-                session.exec(delete(Cache).where(Cache.key.startswith("results")))
+        if "results" in keys:
+            session.exec(delete(Cache).where(Cache.key.startswith("results")))
+
+        if "llms" in keys:
+            sqlite_cache: SQLiteCache = get_llm_cache()
+            session.exec(delete(sqlite_cache.cache_schema))
 
         session.commit()
         session.close()
@@ -607,20 +468,25 @@ class OptimizationUseCase:
             num_inequality_constraints: int,
             num_equality_constraints: int,
             evaluator: Callable[[List[OptimizationEvaluateRunResponse]], Dict[str, Any]],
+            job_resources: Dict[str, Any],
     ):
-        variables: Dict[str, OptimizationBinary | OptimizationChoice | OptimizationInteger | OptimizationReal] = {}
+        self.reset(keys=["results", "objectives"])
+
         session: Session = self.one_datastore.get_session()
         session.begin()
-        session.exec(delete(Cache).where(Cache.key.startswith("results")))
-        session.exec(delete(Cache).where(Cache.key == "objectives"))
 
         client_caches = list(session.exec(select(Cache).where(Cache.key.startswith("clients"))).all())
         objective_caches = list(session.exec(select(Cache).where(Cache.key == "objectives")).all())
 
         clients: Dict[str, OptimizationClient] = {}
+        variables: Dict[str, OptimizationBinary | OptimizationChoice | OptimizationInteger | OptimizationReal] = {}
 
         for client_cache in client_caches:
             client: OptimizationClient = dill.loads(client_cache.value)
+
+            if client.is_ready is False:
+                raise ValueError(f"Client {client.id} is not ready.")
+
             variables.update(client.variables)
             clients[client.id] = client
 
@@ -648,7 +514,8 @@ class OptimizationUseCase:
             num_equality_constraints=num_equality_constraints,
             variables=variables,
             evaluator=evaluator,
-            clients=clients
+            clients=clients,
+            job_resources=job_resources
         )
 
         if type(result.F) != np.ndarray or result.F.ndim == 1:
@@ -659,18 +526,23 @@ class OptimizationUseCase:
 
         return result
 
-    def plot(self, result: Result, decision_index: int) -> List[Plot]:
-        plot_0 = Scatter()
-        plot_0.add(result.F, color="blue")
-        plot_0.add(result.F[decision_index], color="green")
-        plot_0.show()
+    def plot(self, result: Result, decision_index: int) -> Dict[str, Plot]:
+        plot_scatter = Scatter()
+        plot_scatter.add(result.F, color="blue")
+        plot_scatter.add(result.F[decision_index], color="green")
+        plot_scatter.show()
 
-        plot_1 = PCP()
-        plot_1.add(result.F, color="blue")
-        plot_1.add(result.F[decision_index], color="green")
-        plot_1.show()
+        plot_pcp = PCP()
+        plot_pcp.add(result.F, color="blue")
+        plot_pcp.add(result.F[decision_index], color="green")
+        plot_pcp.show()
 
-        return [plot_0, plot_1]
+        plots: Dict[str, Plot] = {
+            "scatter": plot_scatter,
+            "pcp": plot_pcp
+        }
+
+        return plots
 
     def minimize(
             self,
@@ -680,8 +552,11 @@ class OptimizationUseCase:
             variables: Dict[str, OptimizationBinary | OptimizationChoice | OptimizationInteger | OptimizationReal],
             evaluator: Callable[[List[OptimizationEvaluateRunResponse]], Dict[str, Any]],
             clients: Dict[str, OptimizationClient],
+            job_resources: Dict[str, Any],
     ) -> Result:
-        runner: OptimizationProblemRunner = OptimizationProblemRunner()
+        runner: RayParallelization = RayParallelization(
+            job_resources=job_resources
+        )
 
         problem: OptimizationProblem = OptimizationProblem(
             application_setting=self.application_setting,
@@ -696,7 +571,7 @@ class OptimizationUseCase:
             elementwise_runner=runner
         )
 
-        algorithm: SMSEMOA = SMSEMOA(
+        algorithm: AGEMOEA2 = AGEMOEA2(
             sampling=MixedVariableSampling(),
             mating=MixedVariableMating(eliminate_duplicates=MixedVariableDuplicateElimination()),
             eliminate_duplicates=MixedVariableDuplicateElimination(),

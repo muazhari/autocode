@@ -33,30 +33,15 @@ class CodeScoring(BaseModelV1):
     overall_maintainability: float = FieldV1(description="Overall maintainability score.")
 
 
-class CodeVariation(BaseModelV1):
-    """
-    Propose code variation.
-    """
-    analysis: List[str] = FieldV1(description="Step-by-step analysis before proposing the code variation.")
-    variation: str = FieldV1(description="Proposed code variation.")
-
-
 class ScoringState(TypedDict):
     programming_language: str
     existing_code: str
     score: CodeScoring
 
 
-class VariationState(TypedDict):
-    programming_language: str
-    existing_code: str
-    variations: List[CodeVariation]
-
-
 class OptimizationVariable(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     type: str
-    name: str
     _client_id: Optional[str] = PrivateAttr(default=None)
 
     def get_client_id(self):

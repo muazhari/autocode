@@ -244,10 +244,9 @@ func Test(t *testing.T) {
 	optimization := autocode.NewOptimization(
 		variables,
 		application,
-		"host.docker.internal",
+		"192.168.137.2",
 		10000,
 		11000,
-		[]string{},
 	)
 	optimization.Prepare()
 }
