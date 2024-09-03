@@ -9,7 +9,7 @@ Auto Code Improvement by Metrics Optimization.
 Autocode selects the best values for optimized metrics. The variable value types could be bool, int, float, and choice (including
 but not limited to code). This project utilizes a Large Language Model and Mixed-Variable Many-Objective Optimization.
 Based on our research/literature review, this project hypothetically can contribute to the economic performance of
-companies.
+companies.  
 
 ## Features
 
@@ -24,10 +24,14 @@ companies.
 ## How to Use
 
 1. Install the requirements
-
-```bash
-pip install -U autocode-py
-```
+- pypi (old)
+  ```bash
+  pip install -U autocode-py
+  ```
+- github (new)
+  ```bash
+  pip install -U git+https://github.com/muazhari/autocode.git@main
+  ```
 
 2. Prepare software to be processed as in the [`./example/client`](https://github.com/muazhari/autocode/tree/main/example/client) folder.
 3. Prepare deployment as in the [`./example/client/docker-compose.yml`](https://github.com/muazhari/autocode/blob/main/example/client/docker-compose.yml) file.

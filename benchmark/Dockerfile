@@ -3,25 +3,30 @@ FROM muazhari/cuda-torch-tensorflow:latest
 
 # Setup workdir.
 ENV WORKDIR=/workdir
-
 WORKDIR $WORKDIR
 
-# SSH server setup.
-RUN apt update -y
-
-RUN yes | DEBIAN_FRONTEND=noninteractive apt install -y \
+# Install apt dependencies.
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+  --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-fast update -y \
+    && \
+    yes | apt-fast install -y \
     openssh-server \
     git
 
+# Setup sshd.
 RUN mkdir /var/run/sshd
-
 RUN echo 'root:root' | chpasswd
-
 RUN echo "PermitRootLogin yes" >> /etc/ssh/sshd_config
 
-# Setup dependencies.
-COPY requirements.txt .
+# Copy the requirements.txt file to the working directory.
+COPY ./requirements.txt ./requirements.txt
 
-RUN pip3 install -r requirements.txt --use-feature=fast-deps --break-system-packages
-
-RUN pip3 install ray[default,tune] --use-feature=fast-deps --break-system-packages
+# Install python dependencies from requirements.txt.
+RUN --mount=type=cache,target=/root/.cache/pip \
+    --mount=type=cache,target=/root/.cache/uv \
+    uv pip install --system \
+    ray[default,tune] \
+    -r requirements.txt \
+    --break-system-packages \
+    --no-build-isolation

@@ -6,25 +6,27 @@ pytest-asyncio
 pytest-xdist
 pytest-cov
 
+gpy>=1.13.2
+pandas
 numba
 rexmex
 optuna
-pymoo
+pymoo @git+https://github.com/anyoptimization/pymoo@main
 pysamoo
 hebo
 ax-platform
 pydantic_settings
 fastapi
-dependency-injector>=4.42.0b1
+dependency-injector
 ray
 fastapi
-matplotlib<3.9.0
+matplotlib
 sqlmodel
 dill
 streamlit
-numpy>=1.26.4,<2
+numpy
 python-on-whales
 uvicorn
 langchain
-langchain-openai>=0.1.21rc1
+langchain-openai
 langgraph
