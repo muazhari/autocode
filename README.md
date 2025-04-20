@@ -2,7 +2,7 @@
 
 # autocode
 
-Auto Code Improvement by Metrics Optimization.
+Auto Code Improvements by Metrics Optimization.
 
 ## Description
 
@@ -15,11 +15,12 @@ companies.
 
 - Many-software Value-level Mixed-variable Many-objective Optimization.
 - Variable types are bool, int, float, and choice (including but not limited to code).
-- Error (MAE/MAE_max) for MCDM (single solution suggestion) is up to 0.0000175.
+- MCDM (single solution suggestion) error (MAE/MAE_max) for `f(x) = x` is up to 0.0000175.
+- IGD+/IGD+_nadir (like MAE/MAE_max) benchmark with standardized problems result is below 0.05 for 25% of cases.
 - Code scoring using LLM.
-- Software cross-language support.
+- Support cross-language softwares.
 - Easy software deployment using docker-compose.
-- Scalable to infinite cores to speed up processing in parallel.
+- Scalable to infinite cores to quicken the parallel processing.
 
 ## How to Use
 

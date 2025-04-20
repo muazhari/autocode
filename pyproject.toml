@@ -1,0 +1,45 @@
+[project]
+name = "autocode-py"
+version = "0.0.1.post10"
+authors = [
+    {name = "muazhari", email = "kharisma.azhari02@gmail.com"}
+]
+description = "autocode: Auto Code Improvement by Metrics Optimization."
+readme = "README.md"
+requires-python = ">=3.10"
+classifiers = [
+    "Intended Audience :: Developers",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development",
+    "Topic :: Scientific/Engineering",
+]
+dependencies = [
+    "pymoo @ git+https://github.com/anyoptimization/pymoo@main",
+    "numba",
+    "pydantic_settings",
+    "fastapi",
+    "pandas",
+    "dependency-injector",
+    "ray[default]",
+    "matplotlib",
+    "sqlmodel",
+    "dill",
+    "streamlit",
+    "numpy",
+    "python-on-whales",
+    "uvicorn",
+    "langchain",
+    "langchain-openai",
+    "langchain-google-genai",
+    "langgraph",
+]
+
+[project.urls]
+Homepage = "https://github.com/muazhari/autocode"
+
+[tool.setuptools]
+packages = ["autocode"]
